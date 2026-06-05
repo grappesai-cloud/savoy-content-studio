@@ -49,17 +49,55 @@ function mockPoll(jobId: string): JobStatus {
 }
 
 // ── Image generation (Higgsfield platform) ────────────────────────────────────
-// Models pinned by the sponsor brief (savoy-content-studio.docx):
-//   mode 'scene'   → GPT Image 2 (no giraffe)
-//   mode 'giraffe' → Nano Banana, identity-locked with girafa.jpg reference
-//   scene video    → Seedance 2.0
-// TODO(kickoff): confirm endpoint + payload field names against config.yaml.
-// The seam is stable: prompt + optional reference image in, jobId out, poll until URL.
+// Real API (verified against docs.higgsfield.ai + live probes with our key):
+//   auth:   Authorization: Key {key_id}:{key_secret}
+//   submit: POST https://platform.higgsfield.ai/{model_path}
+//   poll:   GET  https://platform.higgsfield.ai/requests/{request_id}/status
+//           → { status: queued|in_progress|completed|failed|nsfw,
+//               images: [...], video: {...} }
+// Model paths confirmed live: higgsfield-ai/soul/standard, reve/text-to-image,
+// kling-video/v2.1/pro/image-to-video. Nano Banana's exact path comes from the
+// sponsor config.yaml → override via HIGGSFIELD_IMAGE_MODEL_GIRAFFE.
 
-const HIGGSFIELD_BASE = e('HIGGSFIELD_API_BASE') || 'https://platform.higgsfield.ai/v1';
-const IMAGE_MODEL_SCENE = 'gpt-image-2';
-const IMAGE_MODEL_GIRAFFE = 'nano-banana';
-const VIDEO_MODEL_SCENE = 'seedance-2.0';
+const HIGGSFIELD_BASE = e('HIGGSFIELD_API_BASE') || 'https://platform.higgsfield.ai';
+const IMAGE_MODEL_SCENE = e('HIGGSFIELD_IMAGE_MODEL_SCENE') || 'higgsfield-ai/soul/standard';
+const IMAGE_MODEL_GIRAFFE = e('HIGGSFIELD_IMAGE_MODEL_GIRAFFE') || 'google/nano-banana';
+const VIDEO_MODEL = e('HIGGSFIELD_VIDEO_MODEL') || 'kling-video/v2.1/pro/image-to-video';
+
+function hfAuth() {
+  return { Authorization: `Key ${e('HIGGSFIELD_API_KEY')}:${e('HIGGSFIELD_API_SECRET')}` };
+}
+
+async function hfSubmit(modelPath: string, body: Record<string, unknown>): Promise<string> {
+  const res = await fetch(`${HIGGSFIELD_BASE}/${modelPath}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...hfAuth() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Higgsfield ${modelPath} failed: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  const id = data.request_id ?? data.id;
+  if (!id) throw new Error(`Higgsfield ${modelPath}: no request_id in response`);
+  return id;
+}
+
+async function hfPoll(requestId: string, kind: 'image' | 'video'): Promise<JobStatus> {
+  const res = await fetch(`${HIGGSFIELD_BASE}/requests/${requestId}/status`, { headers: hfAuth() });
+  if (!res.ok) return { state: 'failed', error: `Higgsfield poll failed: ${res.status}` };
+  const data = await res.json();
+  if (data.status === 'completed') {
+    const img = Array.isArray(data.images) ? data.images[0] : null;
+    const url = kind === 'video'
+      ? (data.video?.url ?? data.video)
+      : (typeof img === 'string' ? img : img?.url);
+    if (url) return { state: 'complete', url };
+    return { state: 'failed', error: 'Completed but no output URL' };
+  }
+  if (data.status === 'failed' || data.status === 'nsfw') {
+    return { state: 'failed', error: data.error ?? `Generation ${data.status}` };
+  }
+  return { state: 'pending' };
+}
 
 export async function submitImage(opts: {
   scenePrompt: string;
@@ -77,47 +115,30 @@ export async function submitImage(opts: {
     ? `${opts.scenePrompt}\n\n${GIRAFFE_IDENTITY_LOCK}${poseHint}`
     : `${opts.scenePrompt}\n\nStyle: bright, premium hotel marketing photo-illustration, ${REEL_FORMAT.aspect} vertical composition.`;
 
-  const res = await fetch(`${HIGGSFIELD_BASE}/images/generations`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${e('HIGGSFIELD_API_KEY')}`,
-    },
-    body: JSON.stringify({
-      model: opts.withGiraffe ? IMAGE_MODEL_GIRAFFE : IMAGE_MODEL_SCENE,
-      prompt,
-      aspect_ratio: REEL_FORMAT.aspect,
-      ...(opts.withGiraffe && opts.refImageUrls?.length
-        ? { reference_images: opts.refImageUrls, reference_strength: 0.85 }
-        : {}),
-    }),
+  const jobId = await hfSubmit(opts.withGiraffe ? IMAGE_MODEL_GIRAFFE : IMAGE_MODEL_SCENE, {
+    prompt,
+    aspect_ratio: REEL_FORMAT.aspect,
+    // Nano Banana edit-style reference inputs; exact field name may need the
+    // sponsor config.yaml — input_images is the common shape on this platform.
+    ...(opts.withGiraffe && opts.refImageUrls?.length
+      ? { input_images: opts.refImageUrls, image_urls: opts.refImageUrls }
+      : {}),
   });
-  if (!res.ok) throw new Error(`Higgsfield image submit failed: ${res.status} ${await res.text()}`);
-  const data = await res.json();
-  return { jobId: data.id ?? data.job_id, provider: 'higgsfield' };
+  return { jobId, provider: 'higgsfield' };
 }
 
 export async function pollImage(provider: string, jobId: string): Promise<JobStatus> {
   if (provider === 'mock') return mockPoll(jobId);
-
-  const res = await fetch(`${HIGGSFIELD_BASE}/jobs/${jobId}`, {
-    headers: { Authorization: `Bearer ${e('HIGGSFIELD_API_KEY')}` },
-  });
-  if (!res.ok) return { state: 'failed', error: `Higgsfield poll failed: ${res.status}` };
-  const data = await res.json();
-  if (data.status === 'completed' && (data.output?.url || data.url)) {
-    return { state: 'complete', url: data.output?.url ?? data.url };
-  }
-  if (data.status === 'failed') return { state: 'failed', error: data.error ?? 'Image generation failed' };
-  return { state: 'pending', progress: data.progress };
+  return hfPoll(jobId, 'image');
 }
 
 // ── TTS (ElevenLabs) — synchronous, returns audio bytes ───────────────────────
 // Voice + settings are LOCKED by the brief. Returns a Vercel Blob URL.
 
 export async function generateSpeech(text: string, reelId: string): Promise<string> {
-  if (STUDIO_MOCK()) {
-    // No mock mp3 baked in: in mock mode the video step just uses the mock clip.
+  // Voice goes real as soon as the ElevenLabs key exists — independent of
+  // STUDIO_MOCK, which only gates the (credit-burning) image/video providers.
+  if (!e('ELEVENLABS_API_KEY')) {
     return '/studio/mock-audio.mp3';
   }
 
@@ -188,27 +209,16 @@ export async function submitVideo(opts: {
     return { jobId: data.data?.video_id ?? data.video_id, provider: 'heygen' };
   }
 
-  // Motion: image-to-video anchored on the approved still. With endImageUrl,
-  // the model interpolates between two identity-locked anchors (Kling-style
-  // start+end frame) — near-zero drift. TODO(kickoff): confirm field names.
-  const res = await fetch(`${HIGGSFIELD_BASE}/videos/generations`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${e('HIGGSFIELD_API_KEY')}`,
-    },
-    body: JSON.stringify({
-      model: VIDEO_MODEL_SCENE,
-      image_url: opts.imageUrl,
-      ...(opts.endImageUrl ? { end_image_url: opts.endImageUrl } : {}),
-      prompt: `${opts.motionPrompt} The cartoon character keeps EXACTLY this design, flat 2D cartoon style, no redesign.`,
-      aspect_ratio: REEL_FORMAT.aspect,
-      duration: 8,
-    }),
+  // Motion: image-to-video anchored on the approved still, via Kling on the
+  // Higgsfield platform (path verified live). With endImageUrl the model
+  // interpolates between two identity-locked anchors — near-zero drift.
+  const jobId = await hfSubmit(VIDEO_MODEL, {
+    image_url: opts.imageUrl,
+    ...(opts.endImageUrl ? { end_image_url: opts.endImageUrl } : {}),
+    prompt: `${opts.motionPrompt} The cartoon character keeps EXACTLY this design, flat 2D cartoon style, no redesign.`,
+    duration: 5,
   });
-  if (!res.ok) throw new Error(`Higgsfield video submit failed: ${res.status} ${await res.text()}`);
-  const data = await res.json();
-  return { jobId: data.id ?? data.job_id, provider: 'higgsfield' };
+  return { jobId, provider: 'higgsfield' };
 }
 
 export async function pollVideo(provider: string, jobId: string): Promise<JobStatus> {
@@ -226,7 +236,7 @@ export async function pollVideo(provider: string, jobId: string): Promise<JobSta
     return { state: 'pending' };
   }
 
-  return pollImage(provider, jobId); // Higgsfield uses the same jobs endpoint
+  return hfPoll(jobId, 'video'); // Higgsfield: same status endpoint, video output field
 }
 
 // ── Persist external artifacts to our Blob (provider URLs expire) ────────────
