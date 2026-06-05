@@ -1,0 +1,219 @@
+---
+import { sendWelcomeEmail } from '../lib/resend';
+import { checkRateLimit, getClientIp } from '../lib/rate-limit';
+import { verifyTurnstile, turnstileSiteKey } from '../lib/turnstile';
+import { callAuthApi, redirectWithCookies } from '../lib/auth-server';
+import { e } from '../lib/env';
+
+if (Astro.locals.user) return Astro.redirect('/dashboard');
+
+const siteKey = turnstileSiteKey();
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const ip = getClientIp(Astro.request);
+  const formData = await Astro.request.formData();
+  const email = (formData.get('email') as string)?.trim().toLowerCase();
+  const password = formData.get('password') as string;
+  const name = (formData.get('name') as string) ?? '';
+  const refCode = (formData.get('referral_code') as string || '').trim().toLowerCase();
+  const turnstileToken = (formData.get('cf-turnstile-response') as string | null);
+
+  if (!checkRateLimit(`signup:ip:${ip}`, 2, 30 * 86_400_000)) {
+    error = 'Too many accounts created from this IP. Please try again later.';
+  }
+
+  if (!error) {
+    const captchaOk = await verifyTurnstile(turnstileToken, ip);
+    if (!captchaOk) {
+      error = 'Captcha verification failed. Please try again.';
+    }
+  }
+
+  if (!error) {
+    // Forward referral code (if entered in form) via cookie so the auth.databaseHooks
+    // can pick it up alongside any cookie set by ?ref= attribution.
+    if (refCode && /^[a-z0-9]{4,16}$/i.test(refCode)) {
+      Astro.cookies.set('ref_code', refCode, {
+        path: '/', maxAge: 600, httpOnly: true, sameSite: 'lax', secure: import.meta.env.PROD,
+      });
+    }
+
+    // Re-build headers so the freshly-set ref_code cookie is visible to Better-Auth.
+    const headers = new Headers(Astro.request.headers);
+    const existingCookie = headers.get('cookie') ?? '';
+    if (refCode) {
+      headers.set('cookie', existingCookie ? `${existingCookie}; ref_code=${refCode}` : `ref_code=${refCode}`);
+    }
+
+    const result = await callAuthApi('signUpEmail', { email, password, name }, headers);
+    if (!result.ok) {
+      error = result.error ?? 'Sign-up failed';
+    } else {
+      try {
+        await sendWelcomeEmail({ to: email, name: name || undefined, userId: result.data?.user?.id });
+      } catch (emailErr) {
+        console.error('[sign-up] Welcome email failed:', emailErr);
+      }
+      Astro.cookies.delete('ref_code', { path: '/' });
+      return redirectWithCookies('/dashboard', result.setCookieHeaders);
+    }
+  }
+}
+
+// Conditionally show social-login buttons based on which providers have envs.
+// e() falls back to process.env at runtime on Vercel SSR — import.meta.env
+// doesn't expose non-PUBLIC vars there.
+const googleEnabled = !!(e('GOOGLE_CLIENT_ID') && e('GOOGLE_CLIENT_SECRET'));
+const appleEnabled  = !!(e('APPLE_CLIENT_ID')  && e('APPLE_CLIENT_SECRET'));
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign Up — Grappes</title>
+    <meta name="description" content="Create a Grappes account and generate your custom AI-designed website in about 15 minutes. Free trial, no credit card required." />
+    <link rel="canonical" href="https://grappes.dev/sign-up" />
+    <meta property="og:title" content="Sign Up — Grappes" />
+    <meta property="og:description" content="Create a Grappes account and generate your custom AI-designed website in about 15 minutes." />
+    <meta property="og:image" content="https://grappes.dev/assets/grappes/og-image.png" />
+    <meta property="og:url" content="https://grappes.dev/sign-up" />
+    <meta property="og:site_name" content="Grappes" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Sign Up — Grappes" />
+    <meta name="twitter:description" content="Create a Grappes account and generate your custom AI-designed website in about 15 minutes." />
+    <meta name="twitter:image" content="https://grappes.dev/assets/grappes/og-image.png" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <link rel="icon" type="image/png" href="/assets/grappes/logo.png" />
+
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet" />
+  </head>
+  <body data-auth-bg style="--auth-bg: url('/assets/grappes/auth/sign-up.webp');">
+    <!-- Header -->
+    <header class="auth-header">
+      <div class="auth-container">
+        <a href="/" class="auth-logo">
+          <img src="/assets/grappes/logo.png" alt="Grappes" />
+        </a>
+        <a href="/sign-in" class="auth-header-btn">
+          <span>Sign in</span>
+          <svg width="20" height="20" viewBox="0 0 28 28" fill="none"><rect x="5.066" y="19.978" width="20.571" height="2.612" transform="rotate(-40.28 5.066 19.978)" fill="currentColor"/><rect x="7.971" y="7.245" width="2.612" height="2.612" transform="rotate(-40.28 7.971 7.245)" fill="currentColor"/><rect x="11.652" y="7.548" width="2.612" height="2.612" transform="rotate(-40.28 11.652 7.548)" fill="currentColor"/><rect x="15.334" y="7.852" width="2.612" height="2.612" transform="rotate(-40.28 15.334 7.852)" fill="currentColor"/><rect x="18.712" y="11.837" width="2.612" height="2.612" transform="rotate(-40.28 18.712 11.837)" fill="currentColor"/><rect x="18.408" y="15.52" width="2.612" height="2.612" transform="rotate(-40.28 18.408 15.52)" fill="currentColor"/><rect x="18.104" y="19.201" width="2.612" height="2.612" transform="rotate(-40.28 18.104 19.201)" fill="currentColor"/></svg>
+        </a>
+      </div>
+    </header>
+
+    <!-- Main content -->
+    <main class="auth-main">
+      <div class="auth-container auth-grid">
+        <!-- Left branding -->
+        <div class="auth-brand">
+          <h1 class="auth-title">Start building</h1>
+        </div>
+
+        <!-- Right form -->
+        <div class="auth-form-wrap">
+          <div class="auth-form-card">
+            <h2 class="auth-form-title">Create your account</h2>
+            <p class="auth-form-sub">Free to start, no credit card required</p>
+
+            {googleEnabled && (
+              <button type="button" class="auth-google-btn" data-social-provider="google">
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z" fill="#4285F4"/><path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.26c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z" fill="#34A853"/><path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.997 8.997 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332Z" fill="#FBBC05"/><path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58Z" fill="#EA4335"/></svg>
+                <span>Continue with Google</span>
+              </button>
+            )}
+
+            {appleEnabled && (
+              <button type="button" class="auth-apple-btn" data-social-provider="apple">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 12.5c0-2.4 1.96-3.55 2.05-3.6-1.12-1.63-2.86-1.86-3.48-1.88-1.48-.15-2.88.86-3.63.86-.75 0-1.91-.84-3.14-.82-1.62.02-3.12.94-3.95 2.38C3.65 12.4 4.94 16.66 6.61 19c.81 1.14 1.78 2.41 3.04 2.36 1.22-.05 1.68-.79 3.15-.79s1.89.79 3.17.76c1.31-.02 2.14-1.15 2.94-2.3.93-1.31 1.31-2.59 1.33-2.66-.03-.01-2.54-.98-2.57-3.87zM15.07 5.34c.66-.81 1.11-1.93.98-3.05-.95.04-2.1.63-2.79 1.43-.61.71-1.16 1.86-1.01 2.95 1.06.08 2.15-.53 2.82-1.33z"/></svg>
+                <span>Continue with Apple</span>
+              </button>
+            )}
+
+            {(googleEnabled || appleEnabled) && <div class="auth-divider"><span>or</span></div>}
+
+            <form method="POST">
+              {error && <p class="auth-error">{error}</p>}
+
+              <div class="auth-field">
+                <div class="auth-input-wrap">
+                  <svg class="auth-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                  <input name="name" type="text" autocomplete="name"  placeholder="Full name" />
+                </div>
+              </div>
+
+              <div class="auth-field">
+                <div class="auth-input-wrap">
+                  <svg class="auth-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m2 7 10 6 10-6"/></svg>
+                  <input name="email" type="email" required autocomplete="email"  placeholder="Email address" />
+                </div>
+              </div>
+
+              <div class="auth-field">
+                <div class="auth-input-wrap">
+                  <svg class="auth-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  <input name="password" type="password" required minlength="8" autocomplete="new-password"  placeholder="Password (8+ characters)" />
+                </div>
+              </div>
+
+              <div class="auth-field auth-field--ref">
+                <div class="auth-input-wrap">
+                  <svg class="auth-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                  <input id="ref-input" name="referral_code" type="text" autocomplete="off" maxlength="16"  placeholder="Referral code (optional)" />
+                </div>
+              </div>
+
+              {siteKey && (
+                <div class="cf-turnstile" data-sitekey={siteKey} data-theme="dark" style="margin: 0.5rem 0;"></div>
+              )}
+
+              <button type="submit" class="auth-submit-btn">
+                <span>Create account</span>
+                <svg width="20" height="20" viewBox="0 0 28 28" fill="none"><rect x="5.066" y="19.978" width="20.571" height="2.612" transform="rotate(-40.28 5.066 19.978)" fill="currentColor"/><rect x="7.971" y="7.245" width="2.612" height="2.612" transform="rotate(-40.28 7.971 7.245)" fill="currentColor"/><rect x="11.652" y="7.548" width="2.612" height="2.612" transform="rotate(-40.28 11.652 7.548)" fill="currentColor"/><rect x="15.334" y="7.852" width="2.612" height="2.612" transform="rotate(-40.28 15.334 7.852)" fill="currentColor"/><rect x="18.712" y="11.837" width="2.612" height="2.612" transform="rotate(-40.28 18.712 11.837)" fill="currentColor"/><rect x="18.408" y="15.52" width="2.612" height="2.612" transform="rotate(-40.28 18.408 15.52)" fill="currentColor"/><rect x="18.104" y="19.201" width="2.612" height="2.612" transform="rotate(-40.28 18.104 19.201)" fill="currentColor"/></svg>
+              </button>
+
+              <p class="auth-terms">
+                <span>By signing up you agree to our</span> <a href="/terms">Terms</a> <span>and</span> <a href="/privacy">Privacy Policy</a>
+              </p>
+            </form>
+
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <link rel="stylesheet" href="/assets/grappes/auth.css" />
+
+    {siteKey && (
+      <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    )}
+
+    <script is:inline>
+      document.querySelectorAll('[data-social-provider]').forEach(function(btn){
+        btn.addEventListener('click', async function(e){
+          e.preventDefault();
+          var provider = btn.getAttribute('data-social-provider');
+          btn.setAttribute('disabled', 'true');
+          try {
+            var res = await fetch('/api/auth/sign-in/social', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ provider: provider, callbackURL: '/dashboard' }),
+              credentials: 'same-origin',
+            });
+            var data = await res.json().catch(function(){ return {}; });
+            if (data && data.url) { window.location.href = data.url; return; }
+            if (data && data.redirect && data.redirect.url) { window.location.href = data.redirect.url; return; }
+            alert((data && data.message) || ('Sign in with ' + provider + ' failed. Please try again.'));
+            btn.removeAttribute('disabled');
+          } catch (err) {
+            alert('Network error. Please try again.');
+            btn.removeAttribute('disabled');
+          }
+        });
+      });
+    </script>
+  </body>
+</html>

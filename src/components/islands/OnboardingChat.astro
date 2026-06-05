@@ -1,0 +1,1648 @@
+---
+interface Props {
+  projectId: string;
+  initialMessages?: { role: 'user' | 'assistant'; content: string; timestamp: string }[];
+  initialCompleteness?: number;
+  initialPhase?: string;
+  briefLocale?: string | null;
+  siteLocale?: string | null;
+}
+
+const {
+  projectId,
+  initialMessages = [],
+  initialCompleteness = 0,
+  initialPhase = 'discovery',
+  briefLocale = null,
+  siteLocale = null,
+} = Astro.props;
+
+const PHASES = ['discovery', 'content', 'branding', 'media', 'preferences', 'review'];
+const PHASE_LABELS: Record<string, string> = {
+  discovery: 'Discovery',
+  content: 'Content',
+  branding: 'Branding',
+  media: 'Media',
+  preferences: 'Preferences',
+  review: 'Review',
+};
+const currentPhaseIdx = Math.max(0, PHASES.indexOf(initialPhase));
+---
+
+<div class="chat-wrapper">
+<div class="chat-container" id="onboarding-chat">
+  <!-- Progress -->
+  <div class="progress-section">
+    <div class="progress-header">
+      <span class="progress-label">Brief <span id="completeness-value">{Math.round(initialCompleteness * 100)}%</span> complete</span>
+    </div>
+    <div class="progress-bar" role="progressbar" aria-label="Brief progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(initialCompleteness * 100)}>
+      <div class="progress-fill" id="progress-fill" style={`width: ${initialCompleteness * 100}%`}></div>
+    </div>
+    <div class="phases" role="list" aria-label="Brief phases">
+      {PHASES.map((p, i) => {
+        const isActive = i === currentPhaseIdx;
+        const isDone = i < currentPhaseIdx;
+        return (
+          <span
+            class={`phase-chip ${isActive ? 'active' : ''} ${isDone ? 'done' : ''}`}
+            data-phase={p}
+            role="listitem"
+            aria-current={isActive ? 'step' : undefined}
+          >
+            {isDone && <span class="phase-tick" aria-hidden="true">✓</span>}
+            {PHASE_LABELS[p]}
+          </span>
+        );
+      })}
+    </div>
+  </div>
+
+  <!-- Messages -->
+  <div class="messages" id="messages">
+    {initialMessages.length === 0 && (
+      <div class="empty-state" id="empty-state">
+        <div class="spinner"></div>
+        <p>Starting your onboarding session…</p>
+      </div>
+    )}
+    {initialMessages.map((msg) => (
+      <div class={`message ${msg.role === 'user' ? 'user-msg' : 'assistant-msg'}`}>
+        {msg.role === 'assistant' && <div class="msg-avatar" aria-hidden="true">AI</div>}
+        <div class="bubble" data-raw={msg.role === 'assistant' ? msg.content : undefined}>{msg.content}</div>
+      </div>
+    ))}
+    <!-- Typing indicator (shown via JS while assistant is responding) -->
+    <div class="message assistant-msg typing-indicator" id="typing-indicator" hidden aria-live="polite">
+      <div class="bubble typing-bubble"><span></span><span></span><span></span></div>
+    </div>
+  </div>
+
+  <!-- Input -->
+  <div class="input-area">
+    <!-- Staged image previews (ChatGPT-style) -->
+    <div class="staged-strip" id="staged-strip" hidden></div>
+
+    <form class="input-form" id="chat-form">
+      <!-- Hidden file input — multiple, up to 5 -->
+      <input type="file" id="quick-file-input" accept=".svg,.png,.webp,.jpg,.jpeg,.gif,.heic,.pdf,.zip,.mp4,.webm,.mov" multiple hidden />
+
+      <div class="input-row">
+        <button type="button" id="attach-btn" class="attach-btn" title="Attach image / logo" aria-label="Attach image or logo">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+          </svg>
+        </button>
+        <label class="visually-hidden" for="chat-input">Your message</label>
+        <textarea id="chat-input" class="chat-input" autocomplete="off" rows="1" placeholder="Type your answer…"></textarea>
+      </div>
+      <button type="submit" id="send-btn" class="send-btn" aria-label="Send">
+        <span class="send-btn-label">Send</span>
+        <svg class="send-btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="22" y1="2" x2="11" y2="13"/>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+        </svg>
+      </button>
+    </form>
+  </div>
+</div><!-- end chat-container -->
+</div><!-- end chat-wrapper -->
+
+<!-- Language picker modal — shown on first session -->
+<div class="lang-modal" id="lang-modal" role="dialog" aria-modal="true" aria-labelledby="lang-modal-title" hidden>
+  <div class="lang-modal-backdrop"></div>
+  <div class="lang-modal-card">
+    <h2 id="lang-modal-title" class="lang-modal-title">Choose project languages</h2>
+    <p class="lang-modal-sub">You can talk to us in one language and generate the site in another. You can change these anytime.</p>
+    <form id="lang-form" class="lang-form">
+      <label class="lang-field">
+        <span class="lang-field-label">Brief language (chat)</span>
+        <span class="lang-field-hint">What language do you want to speak with the AI consultant</span>
+        <select id="lang-brief" required>
+          <option value="en">English</option>
+          <option value="ro">Română</option>
+          <option value="fr">Français</option>
+          <option value="de">Deutsch</option>
+          <option value="es">Español</option>
+          <option value="it">Italiano</option>
+          <option value="pt">Português</option>
+          <option value="nl">Nederlands</option>
+          <option value="pl">Polski</option>
+          <option value="hu">Magyar</option>
+        </select>
+      </label>
+      <label class="lang-field">
+        <span class="lang-field-label">Website language</span>
+        <span class="lang-field-hint">What language do you want the site copy in</span>
+        <select id="lang-site" required>
+          <option value="en">English</option>
+          <option value="ro">Română</option>
+          <option value="fr">Français</option>
+          <option value="de">Deutsch</option>
+          <option value="es">Español</option>
+          <option value="it">Italiano</option>
+          <option value="pt">Português</option>
+          <option value="nl">Nederlands</option>
+          <option value="pl">Polski</option>
+          <option value="hu">Magyar</option>
+        </select>
+      </label>
+      <div class="lang-field">
+        <span class="lang-field-label">How detailed should this be?</span>
+        <span class="lang-field-hint">Pick a depth — more detail = better site, longer chat</span>
+        <div class="depth-options" role="radiogroup" aria-label="Onboarding depth">
+          <label class="depth-opt">
+            <input type="radio" name="depth" value="quick" />
+            <span class="depth-opt-inner">
+              <span class="depth-opt-title">Quick</span>
+              <span class="depth-opt-meta">~2 min · 5 questions</span>
+              <span class="depth-opt-desc">Basics only — name, industry, 1 color, logo</span>
+            </span>
+          </label>
+          <label class="depth-opt">
+            <input type="radio" name="depth" value="standard" checked />
+            <span class="depth-opt-inner">
+              <span class="depth-opt-title">Standard</span>
+              <span class="depth-opt-meta">~5 min · ~10 questions</span>
+              <span class="depth-opt-desc">Above + tone, hero, 2-3 sections, tagline</span>
+            </span>
+          </label>
+          <label class="depth-opt">
+            <input type="radio" name="depth" value="deep" />
+            <span class="depth-opt-inner">
+              <span class="depth-opt-title">Deep</span>
+              <span class="depth-opt-meta">~10 min · 15+ questions</span>
+              <span class="depth-opt-desc">Full brief — testimonials, portfolio, audience, SEO</span>
+            </span>
+          </label>
+        </div>
+      </div>
+      <button type="submit" class="lang-submit">Continue</button>
+      <p class="lang-error" id="lang-error" hidden></p>
+    </form>
+  </div>
+</div>
+
+<script define:vars={{ projectId, initialCompleteness, initialPhase, PHASES, hasMessages: initialMessages.length > 0, briefLocale, siteLocale }}>
+  const form = document.getElementById('chat-form');
+  const input = document.getElementById('chat-input');
+  const sendBtn = document.getElementById('send-btn');
+  const messagesEl = document.getElementById('messages');
+  const progressFill = document.getElementById('progress-fill');
+  const completenessValue = document.getElementById('completeness-value');
+  // Declared here so setInputEnabled can reference them before the attach section runs
+  const attachBtn = document.getElementById('attach-btn');
+  const quickFileInput = document.getElementById('quick-file-input');
+
+  let completeness = initialCompleteness;
+  let phase = initialPhase;
+  let loading = false;
+
+  // ── Auto-resize textarea ────────────────────────────────────────────────
+  function autoResize() {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 96) + 'px';
+  }
+  input.addEventListener('input', autoResize);
+
+  // Enter = submit, Shift+Enter = new line
+  input.addEventListener('keydown', function(ev) {
+    if (ev.key === 'Enter' && !ev.shiftKey) {
+      ev.preventDefault();
+      form.dispatchEvent(new Event('submit', { cancelable: true }));
+    }
+  });
+
+  // ── Utilities ─────────────────────────────────────────────────────────────
+
+  function escapeHtml(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function scrollToBottom() {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function renderAssistantBubble(bubble, content) {
+    var text = String(content || '');
+    var lines = text.split('\n');
+
+    // Extract Note / warning lines (anywhere in text)
+    var noteLines = [];
+    var rest = [];
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i];
+      if (/^\s*(note\s*:|⚠️)/i.test(ln)) noteLines.push(ln.replace(/^\s*note\s*:\s*/i, '').replace(/^⚠️\s*/, '').trim());
+      else rest.push(ln);
+    }
+
+    // Find the FIRST contiguous bullet block (lines starting with "- ", allowing blank lines between)
+    var bulletStart = -1, bulletEnd = -1;
+    for (var j = 0; j < rest.length; j++) {
+      var isBullet = /^\s*-\s+/.test(rest[j]);
+      var isBlank  = /^\s*$/.test(rest[j]);
+      if (isBullet) {
+        if (bulletStart === -1) bulletStart = j;
+        bulletEnd = j;
+      } else if (bulletStart !== -1 && !isBlank) {
+        break; // end of bullet block
+      }
+    }
+
+    var chips = [];
+    if (bulletStart !== -1 && bulletEnd > bulletStart) {
+      for (var k = bulletStart; k <= bulletEnd; k++) {
+        if (/^\s*-\s+/.test(rest[k])) chips.push(rest[k].replace(/^\s*-\s+/, '').trim());
+      }
+    }
+    // Only render as chips if it's a CHOICE list (short labels, no "?").
+    // Question lists and open-ended prompts stay as plain bullets.
+    var looksLikeQuestions = chips.some(function(c){ return /\?\s*$/.test(c); });
+    var tooLong = chips.some(function(c){ return c.length > 60; });
+    // Reject color-category labels — both "Primary color" / "Secondary color"
+    // and bare "Primary" / "Secondary" / "Accent" (when Haiku names the slots
+    // without attaching hex codes). Empty color chips look broken to the user.
+    var isColorCategoryChips = chips.length > 0 && chips.every(function(c){
+      var t = c.trim();
+      return /^(primary|secondary|accent)(\s+colou?rs?)?\s*$/i.test(t);
+    });
+    var useChips = chips.length >= 2 && chips.length <= 6 && !looksLikeQuestions && !tooLong && !isColorCategoryChips;
+
+    var preText  = '';
+    var postText = '';
+    if (useChips) {
+      preText  = rest.slice(0, bulletStart).join('\n').replace(/\s+$/, '');
+      postText = rest.slice(bulletEnd + 1).join('\n').replace(/^\s+|\s+$/g, '');
+    } else {
+      preText = rest.join('\n').replace(/\s+$/, '');
+    }
+
+    // Render pre-text
+    if (preText) {
+      var pre = document.createElement('div');
+      pre.className = 'bubble-text';
+      pre.textContent = preText;
+      bubble.appendChild(pre);
+    }
+
+    // Render chips
+    if (useChips) {
+      var chipsEl = document.createElement('div');
+      chipsEl.className = 'quick-replies';
+      chips.forEach(function(label) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'quick-reply';
+        var short = label.split(/—|\(|:|,/)[0].trim();
+        var displayLabel = (short.length && short.length < 40) ? short : label;
+        btn.textContent = displayLabel;
+        btn.addEventListener('click', function() {
+          input.value = short || displayLabel;
+          input.focus();
+          form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        });
+        chipsEl.appendChild(btn);
+      });
+      bubble.appendChild(chipsEl);
+    }
+
+    // Render post-text (e.g. "Which direction feels right?")
+    if (postText) {
+      var post = document.createElement('div');
+      post.className = 'bubble-text bubble-text-post';
+      post.textContent = postText;
+      bubble.appendChild(post);
+    }
+
+    // Note callout (always at bottom, visually distinct)
+    if (noteLines.length) {
+      var note = document.createElement('div');
+      note.className = 'bubble-note';
+      note.innerHTML = '<span class="bubble-note-icon">⚠️</span><span>' + noteLines.map(escapeHtml).join('<br>') + '</span>';
+      bubble.appendChild(note);
+    }
+  }
+
+  function appendMessage(role, content) {
+    const wrapper = document.createElement('div');
+    wrapper.className = `message ${role === 'user' ? 'user-msg' : 'assistant-msg'}`;
+
+    if (role === 'assistant') {
+      var avatar = document.createElement('div');
+      avatar.className = 'msg-avatar';
+      avatar.setAttribute('aria-hidden', 'true');
+      avatar.textContent = 'AI';
+      wrapper.appendChild(avatar);
+    }
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    if (role === 'assistant') {
+      renderAssistantBubble(bubble, content);
+    } else {
+      bubble.textContent = content;
+    }
+    wrapper.appendChild(bubble);
+    // Insert before the typing indicator so it stays at the bottom
+    var typing = document.getElementById('typing-indicator');
+    if (typing && typing.parentElement === messagesEl) {
+      messagesEl.insertBefore(wrapper, typing);
+    } else {
+      messagesEl.appendChild(wrapper);
+    }
+    scrollToBottom();
+    return wrapper;
+  }
+  function showTyping() {
+    var t = document.getElementById('typing-indicator');
+    if (t) { t.hidden = false; scrollToBottom(); }
+  }
+  function hideTyping() {
+    var t = document.getElementById('typing-indicator');
+    if (t) t.hidden = true;
+  }
+
+  function updateProgress(newCompleteness, newPhase) {
+    completeness = newCompleteness;
+    phase = newPhase;
+    progressFill.style.width = `${completeness * 100}%`;
+    completenessValue.textContent = `${Math.round(completeness * 100)}%`;
+    document.querySelectorAll('.phase-chip').forEach((chip, i) => {
+      chip.className = 'phase-chip';
+      if (chip.dataset.phase === phase) chip.classList.add('active');
+      else if (i < PHASES.indexOf(phase)) chip.classList.add('done');
+    });
+  }
+
+  // Use user's selected language from localStorage, fallback to browser language
+  const browserLang = (localStorage.getItem('i18nextLng') || navigator.language || 'en').split('-')[0];
+
+  async function callAPI(body, timeoutMs = 180000) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(`/api/onboarding/${projectId}/message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, browserLang }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      // Session expired → reload to login
+      if (res.status === 401) { window.location.href = '/'; throw new Error('Unauthorized'); }
+      let data;
+      try { data = await res.json(); } catch { data = { error: 'Invalid server response' }; }
+      return { res, data };
+    } catch (err) {
+      clearTimeout(timer);
+      if (err.name === 'AbortError') throw new Error('Request timed out. Please try again.');
+      throw err;
+    }
+  }
+
+  function setInputEnabled(enabled) {
+    loading = !enabled;
+    sendBtn.disabled = !enabled;
+    input.disabled = !enabled;
+    if (attachBtn) attachBtn.disabled = !enabled;
+  }
+
+  function showThinking() {
+    showTyping();
+    // Return a shim with .remove() so existing callers using `thinking.remove()` still work.
+    return { remove: hideTyping };
+  }
+
+  function showReviewCTA() {
+    const existing = document.querySelector('.review-cta');
+    if (existing) return;
+    const cta = document.createElement('div');
+    cta.className = 'review-cta';
+    cta.innerHTML = `<span>Your brief looks great!</span><a href="/dashboard/${projectId}" class="review-btn">Review brief →</a>`;
+    messagesEl.appendChild(cta);
+    cta.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }
+
+  function showLaunchCTA() {
+    const existing = document.querySelector('.launch-cta');
+    if (existing) return;
+    const cta = document.createElement('div');
+    cta.className = 'launch-cta';
+    cta.innerHTML = `
+      <span>Your brief is complete!</span>
+      <div class="launch-cta-btns">
+        <a href="/dashboard/${projectId}" class="btn-outline-sm">Review brief</a>
+        <button class="btn-launch-sm" id="chat-launch-btn">Launch website →</button>
+      </div>`;
+    messagesEl.appendChild(cta);
+    cta.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    document.getElementById('chat-launch-btn')?.addEventListener('click', () => {
+      window.location.href = `/dashboard/${projectId}?launch=1`;
+    });
+  }
+
+  // ── Handle Haiku response ─────────────────────────────────────────────────
+
+  function handleApiResponse(data, thinkingEl) {
+    if (thinkingEl) thinkingEl.remove();
+
+    if (data.reply) {
+      const msgEl = appendMessage('assistant', data.reply);
+      updateProgress(data.completeness ?? completeness, data.phase ?? phase);
+
+      // Render upload widget if present
+      if (data.uiAction) {
+        const widget = buildWidget(data.uiAction);
+        if (widget) {
+          msgEl.appendChild(widget);
+          msgEl.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+      }
+
+      if (data.isComplete) {
+        // Brief confirmed by AI — confirm THEN redirect to dashboard
+        (async () => {
+          try {
+            await fetch(`/api/onboarding/${projectId}/confirm`, { method: 'POST' });
+          } catch (e) {
+            console.warn('Brief confirmation failed:', e);
+          }
+          window.location.href = `/dashboard/${projectId}`;
+        })();
+      } else if (data.isReviewReady && completeness >= 0.85) {
+        showLaunchCTA();
+      } else if (data.isReviewReady) {
+        showReviewCTA();
+      }
+    }
+
+    setInputEnabled(true);
+    input.focus();
+  }
+
+  // ── Media widget builder ───────────────────────────────────────────────────
+
+  const WIDGET_LABELS = {
+    logo:    { title: 'Logo',              hint: 'SVG, PNG, WEBP — max 2 MB',  accept: '.svg,.png,.webp,.jpg,.jpeg' },
+    hero:    { title: 'Hero Image',        hint: 'JPG, PNG, WEBP — max 10 MB', accept: '.jpg,.jpeg,.png,.webp' },
+    section: { title: 'Section Image',     hint: 'JPG, PNG, WEBP — max 5 MB',  accept: '.jpg,.jpeg,.png,.webp' },
+    menu:    { title: 'Menu Photo',        hint: 'JPG, PNG — photo of the menu — max 10 MB', accept: '.jpg,.jpeg,.png,.webp' },
+    og:      { title: 'OG / Social Image', hint: 'JPG, PNG — 1200×630 — max 2 MB', accept: '.jpg,.jpeg,.png,.webp' },
+    favicon: { title: 'Favicon',           hint: 'SVG or PNG — max 512 KB',    accept: '.svg,.png,.ico' },
+    document:{ title: 'Document',          hint: 'PDF, images — max 20 MB',    accept: '.pdf,.jpg,.jpeg,.png,.webp,.svg' },
+  };
+
+  function buildWidget(uiAction) {
+    const container = document.createElement('div');
+    container.className = 'media-widget';
+
+    if (uiAction.type === 'upload') {
+      const variant = uiAction.variant || 'section';
+      const info = WIDGET_LABELS[variant] || WIDGET_LABELS.section;
+      const label = uiAction.sectionTitle ? uiAction.sectionTitle : info.title;
+
+      container.dataset.variant = variant;
+      container.dataset.sectionId = uiAction.sectionId || '';
+      container.dataset.sectionTitle = uiAction.sectionTitle || '';
+
+      container.innerHTML = `
+        <div class="dz-zone" tabindex="0" role="button" aria-label="Upload ${label}">
+          <input type="file" class="dz-input" accept="${info.accept}" hidden />
+          <div class="dz-body">
+            <div class="dz-icon">↑</div>
+            <div class="dz-label">${label}</div>
+            <div class="dz-hint">${info.hint}</div>
+          </div>
+          <div class="dz-success" hidden>
+            <span class="dz-ok">✓</span>
+            <span class="dz-ok-label">Uploaded!</span>
+          </div>
+        </div>
+        <div class="dz-footer">
+          <button class="dz-skip-btn" type="button">Skip →</button>
+        </div>`;
+
+      wireUploadZone(container, uiAction);
+
+    } else if (uiAction.type === 'choice') {
+      container.innerHTML = `
+        <div class="dz-choices">
+          ${(uiAction.options || []).map(opt =>
+            `<button class="dz-choice-btn" type="button">${opt}</button>`
+          ).join('')}
+        </div>`;
+
+      container.querySelectorAll('.dz-choice-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          container.querySelectorAll('.dz-choice-btn').forEach(b => b.disabled = true);
+          btn.classList.add('selected');
+          setInputEnabled(false);
+          const thinking = showThinking();
+          try {
+            const { res, data } = await callAPI({
+              action: 'media_choice',
+              type: uiAction.variant || 'hero',
+              choice: btn.textContent,
+            });
+            handleApiResponse(res.ok ? data : { reply: data.error || 'Something went wrong.' }, thinking);
+          } catch (err) {
+            thinking.remove();
+            appendMessage('assistant', err.message?.includes('timed out') ? 'Request timed out — please try again.' : 'Connection error. Please try again.');
+            container.querySelectorAll('.dz-choice-btn').forEach(b => b.disabled = false);
+            btn.classList.remove('selected');
+            setInputEnabled(true);
+          }
+        });
+      });
+    }
+
+    return container;
+  }
+
+  function wireUploadZone(container, uiAction) {
+    const zone = container.querySelector('.dz-zone');
+    const fileInput = container.querySelector('.dz-input');
+    const skipBtn = container.querySelector('.dz-skip-btn');
+    const dzBody = container.querySelector('.dz-body');
+    const dzSuccess = container.querySelector('.dz-success');
+
+    zone.addEventListener('click', () => { if (!zone.dataset.uploaded) fileInput.click(); });
+    zone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault();
+      zone.classList.remove('drag-over');
+      const file = e.dataTransfer?.files[0];
+      if (file) doUpload(file, container, uiAction, dzBody, dzSuccess);
+    });
+    fileInput.addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (file) doUpload(file, container, uiAction, dzBody, dzSuccess);
+    });
+    skipBtn.addEventListener('click', async () => {
+      skipBtn.disabled = true;
+      skipBtn.textContent = 'Skipping…';
+      setInputEnabled(false);
+      const thinking = showThinking();
+      try {
+        const { res, data } = await callAPI({
+          action: 'media_skipped',
+          type: uiAction.variant || 'section',
+          sectionId: uiAction.sectionId,
+          sectionTitle: uiAction.sectionTitle,
+        });
+        handleApiResponse(res.ok ? data : { reply: data.error || 'Something went wrong.' }, thinking);
+      } catch (err) {
+        thinking.remove();
+        appendMessage('assistant', err.message?.includes('timed out') ? 'Request timed out — please try again.' : 'Connection error. Please try again.');
+        setInputEnabled(true);
+        skipBtn.disabled = false;
+        skipBtn.textContent = 'Skip →';
+      }
+    });
+  }
+
+  async function doUpload(file, container, uiAction, dzBody, dzSuccess) {
+    const zone = container.querySelector('.dz-zone');
+    if (zone.dataset.uploaded) return;
+    if (file.size > 10 * 1024 * 1024) {
+      dzBody.innerHTML = '<div class="dz-icon">✗</div><div class="dz-label">File too large</div><div class="dz-hint">Maximum 10 MB</div>';
+      return;
+    }
+    zone.dataset.uploaded = '1';
+
+    // Show progress
+    dzBody.querySelector('.dz-icon').textContent = '⏳';
+    dzBody.querySelector('.dz-label').textContent = 'Uploading…';
+    dzBody.querySelector('.dz-hint').textContent = file.name;
+    container.querySelector('.dz-skip-btn').disabled = true;
+
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('type', uiAction.variant || 'section');
+    if (uiAction.sectionId) fd.append('sectionId', uiAction.sectionId);
+    if (uiAction.sectionTitle) fd.append('sectionTitle', uiAction.sectionTitle);
+
+    try {
+      const uploadRes = await fetch(`/api/assets/${projectId}/upload`, { method: 'POST', body: fd });
+      const uploadData = await uploadRes.json();
+
+      if (!uploadRes.ok) {
+        dzBody.querySelector('.dz-icon').textContent = '✕';
+        dzBody.querySelector('.dz-label').textContent = uploadData.error || 'Upload failed';
+        dzBody.querySelector('.dz-hint').textContent = 'Click to retry';
+        delete zone.dataset.uploaded;
+        container.querySelector('.dz-skip-btn').disabled = false;
+        return;
+      }
+
+      // Show success
+      dzBody.hidden = true;
+      dzSuccess.hidden = false;
+      zone.classList.add('uploaded');
+
+      // Show thumbnail if image
+      if (uploadData.asset?.public_url) {
+        const img = document.createElement('img');
+        img.src = uploadData.asset.public_url;
+        img.style.cssText = 'max-width:120px;max-height:80px;object-fit:cover;border-radius:4px;border:1px solid rgba(56,161,105,0.2);';
+        img.alt = 'Uploaded';
+        dzSuccess.appendChild(img);
+      }
+
+      setInputEnabled(false);
+      const thinking = showThinking();
+      const isMenu = uiAction.variant === 'menu';
+      const isDoc = uiAction.variant === 'document';
+      const { res, data } = await callAPI({
+        action: isMenu ? 'menu_uploaded' : isDoc ? 'document_uploaded' : 'media_uploaded',
+        type: uiAction.variant || 'section',
+        assetId: uploadData.asset?.id,
+        assetUrl: (isMenu || isDoc) ? uploadData.asset?.public_url : undefined,
+        sectionId: uiAction.sectionId,
+        sectionTitle: uiAction.sectionTitle,
+      });
+      handleApiResponse(res.ok ? data : { reply: data.error || 'Something went wrong.' }, thinking);
+
+    } catch {
+      dzBody.querySelector('.dz-icon').textContent = '✕';
+      dzBody.querySelector('.dz-label').textContent = 'Network error';
+      dzBody.querySelector('.dz-hint').textContent = 'Click to retry';
+      delete zone.dataset.uploaded;
+      container.querySelector('.dz-skip-btn').disabled = false;
+    }
+  }
+
+  // ── Auto-init ──────────────────────────────────────────────────────────────
+
+  // Scroll to bottom on load when there are existing messages
+  if (hasMessages) {
+    scrollToBottom();
+  } else {
+    setInputEnabled(false);
+    // If no brief language was chosen yet, show the picker first.
+    // Otherwise go straight to AI init.
+    if (!briefLocale) {
+      showLanguageModal();
+    } else {
+      setTimeout(() => initSession(0), 200);
+    }
+  }
+
+  // Re-render any server-rendered assistant bubbles so they get note/chip/avatar treatment
+  document.querySelectorAll('.assistant-msg .bubble[data-raw]').forEach(function(b) {
+    var raw = b.getAttribute('data-raw') || '';
+    b.innerHTML = '';
+    renderAssistantBubble(b, raw);
+  });
+
+  function showLanguageModal() {
+    var modal = document.getElementById('lang-modal');
+    if (!modal) { setTimeout(() => initSession(0), 200); return; }
+    // Default both to English; user can change before submitting.
+    var briefSel = document.getElementById('lang-brief');
+    var siteSel = document.getElementById('lang-site');
+    if (briefSel) briefSel.value = 'en';
+    if (siteSel)  siteSel.value  = 'en';
+    modal.hidden = false;
+    document.body.style.overflow = 'hidden';
+
+    var form = document.getElementById('lang-form');
+    var errEl = document.getElementById('lang-error');
+    form?.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var btn = form.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      errEl.hidden = true;
+      try {
+        var depthInput = form.querySelector('input[name="depth"]:checked');
+        var depthVal = depthInput ? depthInput.value : 'standard';
+        var res = await fetch('/api/projects/' + projectId + '/language', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            briefLocale: briefSel.value,
+            siteLocale: siteSel.value,
+            depth: depthVal,
+          }),
+        });
+        if (!res.ok) throw new Error('Save failed');
+        modal.hidden = true;
+        document.body.style.overflow = '';
+        setTimeout(() => initSession(0), 100);
+      } catch (err) {
+        errEl.textContent = 'Failed to save languages. Try again.';
+        errEl.hidden = false;
+        btn.disabled = false;
+        btn.textContent = 'Continue';
+      }
+    }, { once: false });
+  }
+
+  async function initSession(attempt) {
+    try {
+      const { res, data } = await callAPI({ init: true });
+      document.getElementById('empty-state')?.remove();
+      if (res.ok) {
+        handleApiResponse(data, null);
+      } else if (res.status === 503 && attempt < 1) {
+        // AI overloaded — retry once after 3s
+        const emptyState = document.getElementById('empty-state');
+        if (emptyState) emptyState.querySelector('p').textContent = 'AI is busy, retrying…';
+        setTimeout(() => initSession(1), 3000);
+      } else {
+        document.getElementById('empty-state')?.remove();
+        appendMessage('assistant', data.reply || 'Could not start session. Please refresh the page.');
+        setInputEnabled(true);
+      }
+    } catch (err) {
+      document.getElementById('empty-state')?.remove();
+      const msg = err.message?.includes('timed out')
+        ? 'The request timed out. Please refresh the page.'
+        : 'Connection error. Please refresh the page.';
+      appendMessage('assistant', msg);
+      setInputEnabled(true);
+    }
+  }
+
+  // ── Quick attach (paperclip button) ───────────────────────────────────────
+  // Click attach → open file picker directly. User describes in the
+  // accompanying message what each file represents (logo / hero / etc.).
+  attachBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    quickFileInput.click();
+  });
+
+  // ── Staged files (ChatGPT-style) ──────────────────────────────────────────
+  const MAX_STAGED = 5;
+  let stagedFiles = []; // [{file, type, previewUrl}]
+  const stagedStrip = document.getElementById('staged-strip');
+
+  function renderStagedStrip() {
+    stagedStrip.hidden = stagedFiles.length === 0;
+    stagedStrip.innerHTML = '';
+    stagedFiles.forEach((item, idx) => {
+      const card = document.createElement('div');
+      card.className = 'staged-card';
+      card.style.cssText = 'position:relative;width:72px;height:72px;border-radius:8px;overflow:hidden;border:1px solid rgba(0,0,0,0.1);flex-shrink:0;';
+      var isImage = (item.file.type || '').startsWith('image/');
+      var thumb;
+      if (isImage) {
+        thumb = `<img src="${item.previewUrl}" alt="${item.file.name}" class="staged-thumb" style="width:100%;height:100%;object-fit:cover;display:block;" />`;
+      } else {
+        var icon = item.type === 'zip' ? '🗂️' : (item.type === 'video' ? '🎬' : '📄');
+        thumb = `<div class="staged-thumb" style="width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f3f4f6;font-size:22px;line-height:1;color:#6b7280;text-align:center;padding:4px;"><span>${icon}</span><span style="font-size:8px;margin-top:2px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">${item.type}</span></div>`;
+      }
+      card.innerHTML = `
+        ${thumb}
+        <span class="staged-type">${item.type}</span>
+        <button type="button" class="staged-remove" data-idx="${idx}" aria-label="Remove">×</button>`;
+      stagedStrip.appendChild(card);
+    });
+    stagedStrip.querySelectorAll('.staged-remove').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const i = parseInt(btn.dataset.idx);
+        URL.revokeObjectURL(stagedFiles[i].previewUrl);
+        stagedFiles.splice(i, 1);
+        renderStagedStrip();
+      });
+    });
+  }
+
+  // Pick a compatible asset type from the file. Server validates MIME per type,
+  // so we must match: SVG → logo, video → video, font → font, image → section.
+  function inferAssetType(file) {
+    var t = (file.type || '').toLowerCase();
+    var name = (file.name || '').toLowerCase();
+    if (name.endsWith('.zip')) return 'zip';
+    if (t === 'image/svg+xml') return 'logo';
+    if (t === 'application/pdf' || name.endsWith('.pdf')) return 'document';
+    if (t.startsWith('video/') || /\.(mp4|webm|mov)$/.test(name)) return 'video';
+    if (t.startsWith('font/') || /\.(woff2?|ttf|otf)$/.test(name)) return 'font';
+    return 'section';
+  }
+
+  // Files > 4MB OR videos OR zips bypass the Vercel function (4.5MB body limit)
+  // and upload directly to Supabase Storage via signed URL.
+  const DIRECT_UPLOAD_THRESHOLD = 4 * 1024 * 1024;
+  function needsDirectUpload(file, type) {
+    if (type === 'zip' || type === 'video') return true;
+    return file.size > DIRECT_UPLOAD_THRESHOLD;
+  }
+
+  async function uploadViaDirect(file, type) {
+    var kind = type === 'zip' ? 'zip' : (type === 'video' ? 'video' : 'image');
+    var assetType = type === 'zip' ? 'section' : type;
+    var contentType = file.type || (type === 'zip' ? 'application/zip' : 'application/octet-stream');
+
+    // 1) Stream directly to Vercel Blob via client-direct upload.
+    //    The /sign-upload endpoint generates a short-lived token; the file
+    //    bypasses the function body limit entirely.
+    var blob;
+    try {
+      // CDN ESM import — bare specifier '@vercel/blob/client' isn't resolved
+      // inside Astro define:vars scripts (they bypass Vite bundling).
+      var mod = await import('/vendor/vercel-blob-client.js');
+      blob = await mod.upload(file.name, file, {
+        access: 'public',
+        handleUploadUrl: '/api/assets/' + projectId + '/sign-upload',
+        clientPayload: JSON.stringify({ kind: kind, assetType: assetType }),
+        contentType: contentType,
+      });
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : 'Direct upload failed' };
+    }
+
+    // 2) Finalize: register asset row(s) and (for zip) extract entries
+    var finRes = await fetch('/api/assets/' + projectId + '/finalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        storagePath: blob.pathname,
+        publicUrl:   blob.url,
+        contentType: contentType,
+        filename:    file.name,
+        sizeBytes:   file.size,
+        kind:        kind,
+        assetType:   assetType,
+      }),
+    });
+    var finData = await finRes.json();
+    if (!finRes.ok) return { ok: false, error: finData.error || 'Finalize failed' };
+
+    if (kind === 'zip') {
+      return {
+        ok:        true,
+        type:      'zip',
+        extracted: finData.extracted,
+        skipped:   finData.skipped,
+        assets:    finData.assets,
+      };
+    }
+    return { ok: true, asset: finData.asset, type: type };
+  }
+
+  // Client-side size limits — must match sign-upload.ts MAX_BYTES
+  const SIZE_LIMITS = {
+    image:    20 * 1024 * 1024,
+    video:    50 * 1024 * 1024,
+    zip:     200 * 1024 * 1024,
+    document: 20 * 1024 * 1024,
+    font:      5 * 1024 * 1024,
+  };
+
+  // File selected → stage (don't upload yet). User describes intent in message.
+  quickFileInput.addEventListener('change', (e) => {
+    const files = Array.from(e.target.files || []);
+    quickFileInput.value = '';
+    if (!files.length) return;
+
+    const remaining = MAX_STAGED - stagedFiles.length;
+    const tooBig = [];
+    files.slice(0, remaining).forEach(file => {
+      const type = inferAssetType(file);
+      const limitKey = type === 'video' ? 'video' : type === 'zip' ? 'zip' : type === 'document' ? 'document' : type === 'font' ? 'font' : 'image';
+      const limit = SIZE_LIMITS[limitKey];
+      if (file.size > limit) {
+        tooBig.push(`${file.name} (${Math.round(file.size / 1024 / 1024)}MB > ${Math.round(limit / 1024 / 1024)}MB)`);
+        return;
+      }
+      stagedFiles.push({ file, type, previewUrl: URL.createObjectURL(file) });
+    });
+    if (tooBig.length > 0) alert(`Too large:\n${tooBig.join('\n')}`);
+    renderStagedStrip();
+    input.focus();
+    if (!input.value.trim()) {
+      input.placeholder = 'Describe what these are (e.g. "this is my logo")…';
+    }
+  });
+
+  // ── Form submit ────────────────────────────────────────────────────────────
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    const hasFiles = stagedFiles.length > 0;
+    if (!text && !hasFiles) return;
+    if (loading) return;
+
+    input.value = '';
+    input.style.height = 'auto';
+    setInputEnabled(false);
+
+    // ── Case 1: staged images to upload ──────────────────────────────────────
+    if (hasFiles) {
+      const filesToUpload = [...stagedFiles];
+      stagedFiles = [];
+      renderStagedStrip();
+
+      // Show user bubble with thumbnails + message
+      const wrapper = document.createElement('div');
+      wrapper.className = 'message user-msg';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble upload-bubble';
+
+      const thumbsHtml = filesToUpload.map(f =>
+        `<img src="${f.previewUrl}" class="ub-thumb" style="width:72px;height:56px;object-fit:cover;border-radius:4px;border:1px solid rgba(0,0,0,0.06);" alt="${escapeHtml(f.file.name)}" />`
+      ).join('');
+      bubble.innerHTML = `
+        <div class="ub-thumbs-row">${thumbsHtml}</div>
+        ${text ? `<div class="ub-text">${escapeHtml(text)}</div>` : ''}
+        <div class="ub-status">Uploading...</div>`;
+      wrapper.appendChild(bubble);
+      // Insert before typing indicator so subsequent messages stay BELOW this bubble
+      var typingIndicator = document.getElementById('typing-indicator');
+      if (typingIndicator && typingIndicator.parentElement === messagesEl) {
+        messagesEl.insertBefore(wrapper, typingIndicator);
+      } else {
+        messagesEl.appendChild(wrapper);
+      }
+      wrapper.scrollIntoView({ behavior: 'smooth', block: 'end' });
+
+      // Upload all in parallel — large files / videos / zips go through direct-upload
+      const results = await Promise.all(filesToUpload.map(async ({ file, type }) => {
+        try {
+          if (needsDirectUpload(file, type)) {
+            return await uploadViaDirect(file, type);
+          }
+          const fd = new FormData();
+          fd.append('file', file);
+          fd.append('type', type);
+          const res = await fetch(`/api/assets/${projectId}/upload`, { method: 'POST', body: fd });
+          const d = await res.json();
+          return res.ok ? { ok: true, asset: d.asset, type } : { ok: false, error: d.error };
+        } catch (e) {
+          return { ok: false, error: e?.message || 'Network error' };
+        }
+      }));
+
+      // Clean up object URLs
+      filesToUpload.forEach(f => URL.revokeObjectURL(f.previewUrl));
+
+      const succeeded = results.filter(r => r.ok);
+      const failed = results.filter(r => !r.ok);
+
+      if (succeeded.length === 0) {
+        bubble.querySelector('.ub-status').textContent = `Upload failed: ${failed[0]?.error || 'error'}`;
+        setInputEnabled(true);
+        return;
+      }
+
+      bubble.querySelector('.ub-status').textContent =
+        failed.length > 0
+          ? `${succeeded.length} uploaded, ${failed.length} failed`
+          : `${succeeded.length} ${succeeded.length === 1 ? 'image uploaded' : 'images uploaded'}`;
+
+      // Notify Haiku — handle documents separately for text extraction
+      const thinking = showThinking();
+      const docUploads = succeeded.filter(r => r.type === 'document');
+      const zipUploads = succeeded.filter(r => r.type === 'zip');
+      const directUploads = succeeded.filter(r => r.type !== 'document' && r.type !== 'zip');
+
+      // Flatten zip results into individual upload entries for Haiku
+      const zipExpanded = [];
+      for (const z of zipUploads) {
+        if (Array.isArray(z.assets)) {
+          for (const a of z.assets) {
+            zipExpanded.push({ type: a.type || 'section', asset: { id: a.id, public_url: a.public_url } });
+          }
+        }
+      }
+      const otherUploads = [...directUploads, ...zipExpanded];
+
+      // Update bubble status to mention zip extraction count
+      if (zipUploads.length > 0) {
+        const totalExtracted = zipUploads.reduce((n, z) => n + (z.extracted || 0), 0);
+        const statusEl = bubble.querySelector('.ub-status');
+        if (statusEl) statusEl.textContent = `Zip extracted — ${totalExtracted} image${totalExtracted === 1 ? '' : 's'} added`;
+      }
+
+      // Process document uploads first (PDF text extraction)
+      for (const doc of docUploads) {
+        var docResult = await callAPI({
+          action: 'document_uploaded',
+          type: 'document',
+          assetId: doc.asset?.id,
+          assetUrl: doc.asset?.public_url,
+          userContext: text || undefined,
+        });
+      }
+
+      // Then notify about remaining uploads
+      if (otherUploads.length > 0) {
+        var { res, data } = await callAPI({
+          action: 'media_uploaded',
+          uploads: otherUploads.map(r => ({ type: r.type, assetId: r.asset?.id })),
+          type: otherUploads[otherUploads.length - 1].type,
+          assetId: otherUploads[otherUploads.length - 1].asset?.id,
+          userContext: text || undefined,
+        });
+        handleApiResponse(res.ok ? data : { reply: data.error || 'Something went wrong.' }, thinking);
+      } else if (docUploads.length > 0) {
+        handleApiResponse(docResult?.res?.ok ? docResult.data : { reply: docResult?.data?.error || 'Something went wrong.' }, thinking);
+      }
+      return;
+    }
+
+    // ── Case 2: text only ─────────────────────────────────────────────────────
+    appendMessage('user', text);
+    const thinking = showThinking();
+
+    // ── 2a: Detect ingestable URLs (Spotify, SoundCloud, YouTube, Apple Music)
+    const URL_RE = /(https?:\/\/[^\s"'<>]+)/gi;
+    const INGEST_HOST_RE = /(open\.spotify\.com|spotify\.com\/(track|album|playlist)|soundcloud\.com|youtube\.com|youtu\.be|music\.apple\.com)/i;
+    const urlMatches = (text.match(URL_RE) || []).filter(u => INGEST_HOST_RE.test(u));
+    let ingestNote = '';
+    if (urlMatches.length > 0) {
+      const ingestSummaries = [];
+      for (const u of urlMatches.slice(0, 5)) { // safety cap
+        try {
+          const ir = await fetch(`/api/onboarding/${projectId}/ingest-url`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: u }),
+          });
+          const id = await ir.json().catch(() => ({}));
+          if (id.ok && id.summary) ingestSummaries.push(`- ${id.summary}`);
+          else if (id.summary)     ingestSummaries.push(`- ${id.summary}`);
+        } catch {}
+      }
+      if (ingestSummaries.length > 0) {
+        ingestNote = `\n\n[System: extracted from links]\n${ingestSummaries.join('\n')}`;
+      }
+    }
+
+    try {
+      const { res, data } = await callAPI({ message: text + ingestNote });
+      if (res.ok) {
+        handleApiResponse(data, thinking);
+      } else if (res.status === 503) {
+        thinking.remove();
+        appendMessage('assistant', 'AI is momentarily busy — please resend your message in a few seconds.');
+        setInputEnabled(true);
+        input.value = text;
+      } else {
+        thinking.remove();
+        appendMessage('assistant', data.reply || data.error || 'Something went wrong. Please try again.');
+        setInputEnabled(true);
+      }
+    } catch (err) {
+      thinking.remove();
+      const msg = err.message?.includes('timed out')
+        ? 'The request timed out — please try again.'
+        : 'Connection error. Please try again.';
+      appendMessage('assistant', msg);
+      setInputEnabled(true);
+      if (!err.message?.includes('timed out')) input.value = text;
+    }
+  });
+
+  // ── Auto-launch trigger (from review CTA redirect) ─────────────────────────
+  if (new URLSearchParams(window.location.search).get('launch') === '1') {
+    window.history.replaceState({}, '', window.location.pathname);
+    (async () => {
+      try {
+        // Confirm brief first (transitions status onboarding → brief_ready)
+        await fetch(`/api/onboarding/${projectId}/confirm`, { method: 'POST' });
+        // Fire generation — don't await pipeline (takes 60-800s)
+        fetch(`/api/projects/${projectId}/launch`, { method: 'POST' }).catch(() => {});
+        // Give server time to set status='generating', then redirect to dashboard
+        await new Promise(r => setTimeout(r, 1500));
+        window.location.href = `/dashboard/${projectId}`;
+      } catch (e) {
+        appendMessage('assistant', 'Network error during launch. Please try again.');
+      }
+    })();
+  }
+
+  // ── Chat eyes mouse tracking ────────────────────────────────────────────────
+  (function() {
+    var _idleTimer;
+    document.addEventListener('mousemove', function(e) {
+      clearTimeout(_idleTimer);
+      document.querySelectorAll('.chat-iris').forEach(function(iris) {
+        var eye = iris.closest('.chat-eye');
+        if (!eye) return;
+        var r = eye.getBoundingClientRect();
+        var cx = r.left + r.width / 2;
+        var cy = r.top + r.height / 2;
+        var dx = e.clientX - cx;
+        var dy = e.clientY - cy;
+        var ang = Math.atan2(dy, dx);
+        var ratio = Math.min(Math.hypot(dx, dy) / 260, 1);
+        var ix = (Math.cos(ang) * 7 * ratio).toFixed(2);
+        var iy = (Math.sin(ang) * 7 * ratio).toFixed(2);
+        iris.style.animationName = 'none';
+        iris.style.transform = 'translate(calc(-50% + ' + ix + 'px), calc(-30% + ' + iy + 'px))';
+      });
+      _idleTimer = setTimeout(function() {
+        document.querySelectorAll('.chat-iris').forEach(function(iris) {
+          iris.style.animationName = '';
+          iris.style.transform = '';
+        });
+      }, 2500);
+    });
+  })();
+</script>
+
+<style is:global>
+  .chat-wrapper {
+    max-width: 720px; margin: 0 auto; width: 100%;
+    position: relative;
+    display: flex; flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+  }
+  .chat-container {
+    display: flex; flex-direction: column;
+    height: 100%;
+    min-height: 400px;
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px; overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  /* Progress */
+  .progress-section { padding: 1rem 1.25rem 0.875rem; border-bottom: 1px solid rgba(255,255,255,0.06); flex-shrink: 0; }
+  .progress-header { display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.8125rem; }
+  .progress-label { color: rgba(255, 255, 255, 0.65); font-weight: 500; }
+  .progress-label #completeness-value { color: #fff; font-weight: 700; }
+  .progress-bar { height: 6px; background: rgba(255,255,255,0.08); border-radius: 999px; margin-bottom: 0.75rem; overflow: hidden; }
+  .progress-fill { height: 100%; background: #06bfdd; border-radius: 999px; transition: width 0.4s ease; box-shadow: 0 0 12px rgba(6,191,221,0.5); }
+  .phases { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+  .phase-chip {
+    font-size: 0.72rem; padding: 0.28rem 0.7rem; border-radius: 9999px;
+    background: transparent; color: rgba(255, 255, 255, 0.35);
+    border: 1px solid rgba(255,255,255,0.1);
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    transition: all 0.2s;
+  }
+  .phase-chip .phase-tick { font-size: 0.7em; line-height: 1; }
+  .phase-chip.active {
+    background: #06bfdd; color: #0a0a0a; font-weight: 600;
+    border-color: #06bfdd;
+    box-shadow: 0 0 0 3px rgba(6,191,221,0.22);
+  }
+  .phase-chip.done {
+    background: rgba(56,161,105,0.12); color: #6ee7a3; font-weight: 500;
+    border-color: rgba(56,161,105,0.3);
+  }
+
+  /* Messages — scroll area; input stays pinned below via flex-shrink:0 on input-area */
+  .messages {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto; overflow-x: hidden;
+    padding: 1rem 0.75rem;
+    display: flex; flex-direction: column; gap: 0.5rem;
+    background: rgba(10,10,20,0.5);
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(6,191,221,0.35) transparent;
+  }
+  /* Scrollbar styling — visible so user knows they can scroll */
+  .messages::-webkit-scrollbar { width: 8px; }
+  .messages::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
+  .messages::-webkit-scrollbar-thumb { background: rgba(6,191,221,0.35); border-radius: 4px; }
+  .messages::-webkit-scrollbar-thumb:hover { background: rgba(6,191,221,0.6); }
+  .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: rgba(255, 255, 255, 0.3); text-align: center; padding: 2rem; gap: 0.75rem; font-size: 0.875rem; }
+  .spinner { width: 20px; height: 20px; border: 2px solid rgba(6,191,221,0.2); border-top-color: #06bfdd; border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .message { display: flex; max-width: 86%; animation: msgFadeIn 0.25s ease-out; gap: 8px; align-items: flex-start; }
+  .message[hidden] { display: none !important; }
+  @keyframes msgFadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .msg-label { font-size: 0.65rem; color: rgba(255,255,255,0.35); margin-bottom: 0.2rem; padding: 0 0.5rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .user-msg { align-self: flex-end; flex-direction: row-reverse; }
+  .user-msg .msg-label { text-align: right; }
+  .assistant-msg { align-self: flex-start; flex-direction: row; }
+
+  /* AI avatar */
+  .msg-avatar {
+    flex-shrink: 0;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: linear-gradient(135deg, #06bfdd, #6c6bf3);
+    color: #0a0a0a; font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-top: 2px;
+  }
+
+  .bubble { padding: 0.7rem 1rem; border-radius: 16px; font-size: 0.9rem; line-height: 1.55; word-wrap: break-word; }
+  .bubble-text { white-space: pre-wrap; }
+  .bubble-text-post { margin-top: 0.65rem; }
+  .user-msg .bubble {
+    background: linear-gradient(135deg, #06bfdd, #6c6bf3);
+    color: #0a0a0a;
+    border-bottom-right-radius: 4px;
+    box-shadow: 0 2px 10px rgba(6,191,221,0.25);
+    font-weight: 500;
+  }
+  .assistant-msg .bubble {
+    background: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.95);
+    border-bottom-left-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+
+  /* Note/warning callout inside assistant bubble */
+  .bubble-note {
+    margin-top: 0.6rem;
+    padding: 0.5rem 0.7rem;
+    background: rgba(246,197,71,0.08);
+    border: 1px solid rgba(246,197,71,0.25);
+    border-radius: 10px;
+    color: #f6c547;
+    font-size: 0.78rem; line-height: 1.45;
+    display: flex; gap: 0.5rem; align-items: flex-start;
+  }
+  .bubble-note-icon { flex-shrink: 0; font-size: 0.9rem; line-height: 1.3; }
+
+  /* Quick-reply chips (clickable options parsed from bullet list) */
+  .quick-replies { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.7rem; }
+  .quick-reply {
+    font-family: inherit; font-size: 0.8rem; font-weight: 500;
+    background: rgba(6,191,221,0.08);
+    color: #9ee7f1;
+    border: 1px solid rgba(6,191,221,0.25);
+    border-radius: 999px;
+    padding: 0.4rem 0.9rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .quick-reply:hover {
+    background: rgba(6,191,221,0.2);
+    color: #fff;
+    border-color: rgba(6,191,221,0.5);
+    transform: translateY(-1px);
+  }
+  .thinking-bubble { color: rgba(255, 255, 255, 0.35); font-style: italic; background: rgba(255,255,255,0.06) !important; }
+
+  /* Review/Launch CTAs */
+  .review-cta, .launch-cta {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.875rem 1.25rem;
+    background: rgba(6,191,221,0.08); border: 1px solid rgba(6,191,221,0.2);
+    border-radius: 8px; font-size: 0.875rem; color: #ffffff; gap: 1rem; flex-wrap: wrap;
+  }
+  .launch-cta-btns { display: flex; gap: 0.5rem; align-items: center; }
+  .review-btn, .btn-outline-sm {
+    color: #ffffff; padding: 0.4rem 1rem; border-radius: 6px;
+    text-decoration: none; font-size: 0.8125rem; font-weight: 500;
+    border: 1px solid rgba(6,191,221,0.3);
+  }
+  .btn-launch-sm {
+    background: #06bfdd; color: #ffffff; border: none; border-radius: 6px;
+    padding: 0.4rem 1rem; font-size: 0.8125rem; font-weight: 600; cursor: pointer;
+  }
+  .btn-launch-sm:hover { background: #00e088; }
+
+  /* ── Media widget ─────────────────────────────────────────────────────── */
+  .media-widget { margin-top: 0.5rem; width: 100%; max-width: 340px; }
+
+  .dz-zone {
+    border: 1.5px dashed rgba(255,255,255,0.15);
+    border-radius: 12px;
+    padding: 1rem;
+    cursor: pointer;
+    text-align: center;
+    transition: border-color 0.15s, background 0.15s;
+    background: rgba(255,255,255,0.05);
+    position: relative;
+    overflow: hidden;
+    min-height: 90px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .dz-zone:hover, .dz-zone.drag-over { border-color: #06bfdd; background: rgba(6,191,221,0.06); }
+  .dz-zone.uploaded { border-color: #38a169; background: rgba(56,161,105,0.05); cursor: default; }
+
+  .dz-body { display: flex; flex-direction: column; align-items: center; gap: 0.25rem; }
+  .dz-icon { font-size: 1.25rem; color: #06bfdd; }
+  .dz-label { font-size: 0.8125rem; font-weight: 500; color: rgba(255, 255, 255, 0.5); }
+  .dz-hint { font-size: 0.7rem; color: rgba(255, 255, 255, 0.3); }
+
+  .dz-success { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; width: 100%; }
+  .dz-ok { font-size: 1.5rem; color: #38a169; }
+  .dz-ok-label { font-size: 0.75rem; color: #38a169; }
+  .dz-thumb { max-width: 120px; max-height: 80px; object-fit: cover; border-radius: 4px; border: 1px solid rgba(56,161,105,0.2); }
+
+  .dz-footer { display: flex; gap: 0.5rem; margin-top: 0.4rem; }
+  .dz-skip-btn {
+    font-size: 0.75rem; color: rgba(255, 255, 255, 0.3); background: none; border: none; cursor: pointer; padding: 0.2rem 0;
+    text-decoration: underline; text-underline-offset: 2px;
+  }
+  .dz-skip-btn:hover { color: rgba(255, 255, 255, 0.5); }
+  .dz-skip-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Choice widget */
+  .dz-choices { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
+  .dz-choice-btn {
+    font-size: 0.8rem; color: rgba(255,255,255,0.65); background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;
+    padding: 0.4rem 0.875rem; cursor: pointer; transition: all 0.15s;
+  }
+  .dz-choice-btn:hover { color: #ffffff; border-color: rgba(6,191,221,0.4); }
+  .dz-choice-btn.selected { background: rgba(6,191,221,0.12); color: #ffffff; border-color: rgba(6,191,221,0.4); }
+  .dz-choice-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Input area wrapper */
+  .input-area { position: relative; flex-shrink: 0; border-top: 1px solid rgba(255,255,255,0.08); background: rgba(15,15,25,0.6); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+
+  /* Type picker popup */
+  .type-picker {
+    position: absolute; bottom: calc(100% + 4px); left: 1rem;
+    background: rgba(25,25,40,0.95); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px; padding: 0.625rem 0.75rem; z-index: 20;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3); min-width: 240px;
+  }
+  .type-picker-label { font-size: 0.7rem; color: rgba(255,255,255,0.45); display: block; margin-bottom: 0.45rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .type-options { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+  .type-opt {
+    font-size: 0.8rem; color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.1); border-radius: 6px;
+    padding: 0.35rem 0.7rem; cursor: pointer; transition: all 0.12s;
+    white-space: nowrap;
+  }
+  .type-opt:hover { color: #ffffff; background: rgba(255,255,255,0.15); border-color: rgba(6,191,221,0.3); }
+
+  /* Input */
+  .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  .input-form {
+    display: flex; gap: 0.5rem;
+    padding: 0.875rem 1rem 1rem;
+    align-items: stretch;
+  }
+  .input-row {
+    flex: 1; display: flex; align-items: flex-end;
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 14px;
+    padding: 4px 4px 4px 6px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .input-row:focus-within { border-color: #06bfdd; box-shadow: 0 0 0 3px rgba(6,191,221,0.2); }
+  .chat-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    padding: 0.55rem 0.5rem 0.55rem 0.5rem;
+    color: rgba(255,255,255,0.95); font-size: 0.95rem;
+    outline: none; resize: none; overflow-y: auto;
+    max-height: 96px; min-height: 36px;
+    line-height: 1.45; font-family: inherit;
+  }
+  .chat-input:focus, .chat-input:focus-visible { outline: none; }
+  .chat-input:disabled { opacity: 0.5; }
+  .chat-input::placeholder { color: rgba(255,255,255,0.35); }
+  .send-btn {
+    background: rgba(6,191,221,0.15); color: #06bfdd;
+    border: 1px solid rgba(6,191,221,0.35);
+    border-radius: 12px;
+    padding: 0 1.1rem; min-height: 44px;
+    font-size: 0.9rem; font-weight: 600; cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
+    display: inline-flex; align-items: center; gap: 0.45rem;
+  }
+  .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .send-btn:not(:disabled):hover { background: #06bfdd; color: #0a0a0a; border-color: #06bfdd; }
+  .send-btn:not(:disabled):active { transform: translateY(1px); }
+  .send-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .send-btn-icon { display: block; }
+  /* On narrow screens, hide the label so only the icon shows */
+  @media (max-width: 480px) {
+    .send-btn-label { display: none; }
+    .send-btn { padding: 0 0.85rem; }
+  }
+
+  /* Typing indicator (animated dots) */
+  .typing-bubble { display: inline-flex; gap: 4px; align-items: center; padding: 0.85rem 1rem !important; }
+  .typing-bubble span {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: rgba(255,255,255,0.55);
+    animation: typingDot 1.2s infinite ease-in-out;
+  }
+  .typing-bubble span:nth-child(2) { animation-delay: 0.15s; }
+  .typing-bubble span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes typingDot {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-3px); opacity: 1; }
+  }
+
+  /* Attach / paperclip button */
+  .attach-btn {
+    background: transparent; border: none; color: rgba(255,255,255,0.7);
+    border-radius: 8px; padding: 7px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: color 0.15s, background 0.15s;
+    flex-shrink: 0;
+  }
+  .attach-btn:hover, .attach-btn.active {
+    color: #06bfdd;
+    background: rgba(6,191,221,0.1);
+  }
+  .attach-btn:focus-visible { outline: 2px solid #06bfdd; outline-offset: 2px; }
+
+  /* Staged strip (ChatGPT-style image preview above input) */
+  .staged-strip { display: flex; gap: 0.5rem; flex-wrap: wrap; padding: 0.5rem 1rem 0; }
+  .staged-card { position: relative; width: 72px; height: 72px; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12); flex-shrink: 0; }
+  .staged-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .staged-type { position: absolute; bottom: 0; left: 0; right: 0; font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.05em; background: rgba(0,0,0,0.55); color: #fff; text-align: center; padding: 0.1rem 0; }
+  .staged-remove { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; border: none; cursor: pointer; font-size: 0.75rem; line-height: 1; display: flex; align-items: center; justify-content: center; padding: 0; }
+  .staged-remove:hover { background: #e53e3e; }
+
+  /* Upload bubble */
+  .upload-bubble { background: rgba(6,191,221,0.1) !important; max-width: 320px; }
+  .upload-success { background: rgba(56,161,105,0.08) !important; }
+  .ub-thumbs-row { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.3rem; }
+  .ub-row { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+  .ub-icon { font-size: 0.9rem; }
+  .ub-name { font-size: 0.8rem; color: #1a1a2e; word-break: break-all; flex: 1; }
+  .ub-type-tag { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em; color: #00a4af; background: rgba(6,191,221,0.12); border-radius: 4px; padding: 0.1rem 0.4rem; }
+  .ub-thumb { width: 72px; height: 56px; object-fit: cover; border-radius: 4px; border: 1px solid rgba(0,0,0,0.06); }
+  .ub-text { font-size: 0.85rem; color: #1a1a2e; margin-top: 0.2rem; }
+  .ub-status { font-size: 0.75rem; color: #666; margin-top: 0.25rem; }
+
+  /* ── Chat peeping eyes & hand ───────────────────────────── */
+  .chat-eyes {
+    position: absolute; top: 0; right: 20px; transform: translateY(-50%);
+    display: flex; gap: 7px; pointer-events: none; z-index: 10;
+  }
+  /* Eye unit */
+  .chat-unit {
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+  }
+  /* Eyebrow */
+  .chat-brow {
+    width: 30px; height: 4px;
+    background: linear-gradient(90deg, #1a2240 0%, #263160 100%);
+    border-radius: 4px 4px 2px 2px;
+    transform: rotate(-5deg);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.6);
+  }
+  .chat-brow-r { transform: rotate(5deg); }
+  /* Eye globe */
+  .chat-eye {
+    width: 44px; height: 44px;
+    background: radial-gradient(circle at 40% 33%, #f5fffa, #dff5eb 62%, #c5e8d8);
+    border-radius: 50%;
+    border: 2px solid rgba(6,191,221,0.4);
+    box-shadow:
+      0 5px 20px rgba(0,0,0,0.6),
+      0 0 0 1px rgba(6,191,221,0.18),
+      inset 0 -5px 10px rgba(0,0,0,0.15),
+      inset 0 3px 6px rgba(255,255,255,0.5);
+    position: relative; overflow: hidden;
+  }
+  /* Upper eyelid */
+  .chat-eye::before {
+    content: ''; position: absolute; top: -1px; left: -1px; right: -1px;
+    height: 62%;
+    background: linear-gradient(to bottom, #101828 55%, rgba(16,24,40,0) 100%);
+    border-radius: 50% 50% 0 0 / 72% 72% 0 0;
+    transform: scaleY(0); transform-origin: top center;
+    animation: chat-blink 4.2s ease-in-out infinite; z-index: 4;
+  }
+  .chat-unit:last-child .chat-eye::before { animation-delay: 0.09s; }
+  /* Lower lash shadow */
+  .chat-eye::after {
+    content: ''; position: absolute; bottom: -1px; left: -1px; right: -1px;
+    height: 16%;
+    background: linear-gradient(to top, #101828, rgba(16,24,40,0));
+    border-radius: 0 0 50% 50% / 0 0 75% 75%; z-index: 4;
+  }
+  /* Iris */
+  .chat-iris {
+    width: 28px; height: 28px;
+    background:
+      radial-gradient(circle at 37% 33%, rgba(200,255,225,0.9) 0%, transparent 28%),
+      radial-gradient(circle at 37% 33%, #06bfdd 0%, #00c870 30%, #006e3a 65%, #003320 100%);
+    border-radius: 50%; position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -30%);
+    animation: chat-wander 7s ease-in-out infinite; z-index: 2;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 0 1.5px rgba(0,0,0,0.3), inset 0 2px 5px rgba(255,255,255,0.18);
+  }
+  .chat-unit:last-child .chat-iris { animation-delay: -3.1s; }
+  /* Pupil */
+  .chat-pupil {
+    width: 13px; height: 13px;
+    background: radial-gradient(circle at 38% 36%, #1c2248, #040c1a);
+    border-radius: 50%; position: relative; flex-shrink: 0;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.7);
+  }
+  /* Catchlight 1 */
+  .chat-pupil::before {
+    content: ''; width: 4px; height: 4px;
+    background: rgba(255,255,255,0.93); border-radius: 50%;
+    position: absolute; top: 1.5px; right: 1.5px;
+  }
+  /* Catchlight 2 */
+  .chat-pupil::after {
+    content: ''; width: 2px; height: 2px;
+    background: rgba(255,255,255,0.55); border-radius: 50%;
+    position: absolute; bottom: 2px; left: 2.5px;
+  }
+  @keyframes chat-blink {
+    0%, 84% { transform: scaleY(0); }
+    88%      { transform: scaleY(1); }
+    93%      { transform: scaleY(1); }
+    97%, 100%{ transform: scaleY(0); }
+  }
+  @keyframes chat-wander {
+    0%, 50%  { transform: translate(-50%, -30%); }
+    57%      { transform: translate(-22%, -52%); }
+    63%      { transform: translate(-78%, -52%); }
+    69%      { transform: translate(-50%, -8%); }
+    76%, 100%{ transform: translate(-50%, -30%); }
+  }
+
+  /* ── Language picker modal ──────────────────────────────── */
+  .lang-modal {
+    position: fixed; inset: 0; z-index: 9999;
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px;
+  }
+  .lang-modal[hidden] { display: none !important; }
+  .lang-modal-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(5, 5, 8, 0.75);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .lang-modal-card {
+    position: relative; width: 100%; max-width: 520px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    background: #141417;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 18px;
+    padding: 22px 22px 20px;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+    color: #fff;
+  }
+  .lang-modal-title { margin: 0 0 4px; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+  .lang-modal-sub { margin: 0 0 14px; font-size: 12.5px; color: rgba(255,255,255,0.55); line-height: 1.45; }
+  .lang-form { display: flex; flex-direction: column; gap: 12px; }
+  .lang-field { display: flex; flex-direction: column; gap: 2px; }
+  .lang-field-label { font-size: 12.5px; font-weight: 600; color: rgba(255,255,255,0.9); }
+  .lang-field-hint { font-size: 11.5px; color: rgba(255,255,255,0.45); }
+  .lang-field select {
+    margin-top: 4px;
+    background: rgba(255,255,255,0.05); color: #fff;
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
+    padding: 8px 12px; font: inherit; font-size: 13.5px;
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' stroke='rgba(255,255,255,0.55)' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    padding-right: 32px;
+  }
+  .lang-field select:focus { outline: none; border-color: #06bfdd; box-shadow: 0 0 0 3px rgba(6,191,221,0.2); }
+  .lang-submit {
+    margin-top: 4px; padding: 10px 14px; border: none; border-radius: 10px;
+    background: #06bfdd; color: #0a0a0a; font-weight: 700; font-size: 13.5px;
+    cursor: pointer; transition: background 0.15s;
+  }
+  .lang-submit:hover:not(:disabled) { background: #6ee7a3; }
+  .lang-submit:disabled { opacity: 0.6; cursor: wait; }
+  .lang-error { margin: 4px 0 0; font-size: 12px; color: #ff8a8a; }
+
+  /* Depth radio cards — horizontal row, compact */
+  .depth-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 4px; }
+  .depth-opt { display: block; cursor: pointer; }
+  .depth-opt input[type="radio"] {
+    position: absolute; opacity: 0; pointer-events: none;
+  }
+  .depth-opt-inner {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 9px 10px 10px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    transition: all 0.15s;
+    height: 100%;
+  }
+  .depth-opt:hover .depth-opt-inner {
+    background: rgba(255,255,255,0.07);
+    border-color: rgba(6,191,221,0.3);
+  }
+  .depth-opt input[type="radio"]:checked + .depth-opt-inner {
+    background: rgba(6,191,221,0.1);
+    border-color: #06bfdd;
+    box-shadow: 0 0 0 2px rgba(6,191,221,0.2);
+  }
+  .depth-opt-title { font-size: 13px; font-weight: 700; color: #fff; }
+  .depth-opt-meta { font-size: 10px; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 0.04em; }
+  .depth-opt-desc { font-size: 11.5px; color: rgba(255,255,255,0.7); margin-top: 2px; line-height: 1.35; }
+  @media (max-width: 520px) {
+    .depth-options { grid-template-columns: 1fr; }
+  }
+</style>
