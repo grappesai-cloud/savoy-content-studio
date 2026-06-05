@@ -1,5 +1,5 @@
-// ── Studio: the approval gate — a human approves the image BEFORE any money ──
-// is spent on video generation. Judged criterion: cost discipline.
+// ── The approval gate — a human approves ALL anchor stills BEFORE any money ──
+// is spent on video generation. Server-enforced; judged criterion.
 
 import type { APIRoute } from 'astro';
 import { json } from '../../../../../lib/api-utils';
@@ -11,11 +11,15 @@ export const POST: APIRoute = async ({ locals, params }) => {
 
   const reel = await getReel(params.id!, user.id);
   if (!reel) return json({ error: 'Not found' }, 404);
-  if (reel.status !== 'image_ready') {
-    return json({ error: 'Doar o imagine generată poate fi aprobată.' }, 409);
+  if (reel.status !== 'image_ready' || !reel.storyboard) {
+    return json({ error: 'Toate imaginile trebuie generate înainte de aprobare.' }, 409);
+  }
+  const notReady = reel.storyboard.scenes.filter(s => s.image.status !== 'ready');
+  if (notReady.length > 0) {
+    return json({ error: `Scenele ${notReady.map(s => s.n).join(', ')} nu au imagine gata.` }, 409);
   }
 
   await updateReel(reel.id, { status: 'approved', approve: true },
-    { stage: 'approve', msg: 'Imagine aprobată de utilizator' });
+    { stage: 'approve', msg: `Storyboard aprobat (${reel.storyboard.scenes.length} scene)` });
   return json({ ok: true });
 };

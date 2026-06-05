@@ -4,7 +4,6 @@ import type { APIRoute } from 'astro';
 import { getPg } from '../../../lib/supabase';
 import { json } from '../../../lib/api-utils';
 import { listReels } from '../../../lib/studio/db';
-import { GIRAFFE_POSES } from '../../../lib/studio/config';
 
 export const GET: APIRoute = async ({ locals }) => {
   const user = locals.user;
@@ -21,7 +20,6 @@ export const POST: APIRoute = async ({ locals, request }) => {
   const scenePrompt = (body?.scenePrompt ?? '').trim();
   const dialogue = (body?.dialogue ?? '').trim() || null;
   const title = (body?.title ?? '').trim() || 'Reel nou';
-  const pose = GIRAFFE_POSES.some(p => p.id === body?.pose) ? body.pose : null;
 
   if (mode !== 'scene' && mode !== 'giraffe') return json({ error: 'Mod invalid.' }, 400);
   if (scenePrompt.length < 10) return json({ error: 'Descrie scena în cel puțin 10 caractere.' }, 400);
@@ -34,8 +32,8 @@ export const POST: APIRoute = async ({ locals, request }) => {
 
   const sql = getPg();
   const rows = await sql`
-    INSERT INTO studio_reels (user_id, mode, title, scene_prompt, dialogue, pose, events)
-    VALUES (${user.id}, ${mode}, ${title}, ${scenePrompt}, ${dialogue}, ${mode === 'giraffe' ? pose : null},
+    INSERT INTO studio_reels (user_id, mode, title, scene_prompt, dialogue, events)
+    VALUES (${user.id}, ${mode}, ${title}, ${scenePrompt}, ${dialogue},
             ${JSON.stringify([{ at: new Date().toISOString(), stage: 'draft', msg: 'Reel creat' }])}::jsonb)
     RETURNING id
   `;

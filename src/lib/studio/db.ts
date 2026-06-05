@@ -1,10 +1,12 @@
 // ─── Savoy Content Studio: DB access (raw postgres-js via getPg) ─────────────
 
 import { getPg } from '../supabase';
+import type { Storyboard } from './storyboard';
 
 export type StudioMode = 'scene' | 'giraffe';
 export type StudioStatus =
   | 'draft'
+  | 'storyboard_ready'
   | 'image_generating' | 'image_ready' | 'image_failed'
   | 'approved'
   | 'audio_generating'
@@ -19,6 +21,7 @@ export interface StudioReel {
   scene_prompt: string;
   dialogue: string | null;
   pose: string | null;
+  storyboard: Storyboard | null;
   status: StudioStatus;
   error_message: string | null;
   image_url: string | null;
@@ -40,7 +43,20 @@ function hydrate(row: any): StudioReel {
   if (typeof row.events === 'string') {
     try { row.events = JSON.parse(row.events); } catch { row.events = []; }
   }
+  if (typeof row.storyboard === 'string') {
+    try { row.storyboard = JSON.parse(row.storyboard); } catch { row.storyboard = null; }
+  }
   return row as StudioReel;
+}
+
+// Whole-storyboard replace: scene job state lives inside the JSONB, so the
+// poll loop mutates the object and writes it back in one statement.
+export async function setStoryboard(id: string, storyboard: Storyboard): Promise<void> {
+  const sql = getPg();
+  await sql`
+    UPDATE studio_reels SET storyboard = ${JSON.stringify(storyboard)}::jsonb, updated_at = now()
+    WHERE id = ${id}
+  `;
 }
 
 export async function getReel(id: string, userId: string): Promise<StudioReel | null> {

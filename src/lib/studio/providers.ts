@@ -156,12 +156,13 @@ export async function generateSpeech(text: string, reelId: string): Promise<stri
 const HEYGEN_BASE = e('HEYGEN_API_BASE') || 'https://api.heygen.com/v2';
 
 export async function submitVideo(opts: {
-  imageUrl: string;
-  scenePrompt: string;
-  audioUrl?: string; // present → lip-sync path
+  imageUrl: string;     // anchor: the approved identity-locked still
+  motionPrompt: string; // ONE character action + camera move for this 8s clip
+  audioUrl?: string;    // present → lip-sync path (per-scene line)
+  endImageUrl?: string; // optional second anchor: Kling start+end frame interpolation
 }): Promise<{ jobId: string; provider: string }> {
   if (STUDIO_MOCK()) {
-    return { jobId: mockSubmit('video', 12_000), provider: 'mock' };
+    return { jobId: mockSubmit('video', 9_000), provider: 'mock' };
   }
 
   if (opts.audioUrl) {
@@ -187,7 +188,9 @@ export async function submitVideo(opts: {
     return { jobId: data.data?.video_id ?? data.video_id, provider: 'heygen' };
   }
 
-  // Scene motion: image-to-video.
+  // Motion: image-to-video anchored on the approved still. With endImageUrl,
+  // the model interpolates between two identity-locked anchors (Kling-style
+  // start+end frame) — near-zero drift. TODO(kickoff): confirm field names.
   const res = await fetch(`${HIGGSFIELD_BASE}/videos/generations`, {
     method: 'POST',
     headers: {
@@ -197,7 +200,8 @@ export async function submitVideo(opts: {
     body: JSON.stringify({
       model: VIDEO_MODEL_SCENE,
       image_url: opts.imageUrl,
-      prompt: `Subtle cinematic camera motion. ${opts.scenePrompt}`,
+      ...(opts.endImageUrl ? { end_image_url: opts.endImageUrl } : {}),
+      prompt: `${opts.motionPrompt} The cartoon character keeps EXACTLY this design, flat 2D cartoon style, no redesign.`,
       aspect_ratio: REEL_FORMAT.aspect,
       duration: 8,
     }),

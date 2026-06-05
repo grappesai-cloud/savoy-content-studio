@@ -1,14 +1,15 @@
-// ── Studio: reel status — also advances async provider jobs on each poll ─────
+// ── Reel status — advances every in-flight scene job on each poll ────────────
 //
-// Serverless-friendly: no background worker. The client polls this endpoint;
-// when a generation job is in flight we ask the provider, and on completion we
-// archive the artifact into Vercel Blob and advance the pipeline state.
+// Serverless-friendly: no background worker. The client polls; we poll the
+// providers for each generating scene, archive finished artifacts to Blob, and
+// when the LAST scene completes a stage we advance the reel status. When all
+// clips are in, assembly concats the anchored scenes + lays the voice over.
 
 import type { APIRoute } from 'astro';
 import { json } from '../../../../lib/api-utils';
-import { getReel, updateReel } from '../../../../lib/studio/db';
+import { getReel, updateReel, setStoryboard } from '../../../../lib/studio/db';
 import { pollImage, pollVideo, archiveToBlob } from '../../../../lib/studio/providers';
-import { assembleSceneReel } from '../../../../lib/studio/assemble';
+import { assembleReel } from '../../../../lib/studio/assemble';
 
 export const GET: APIRoute = async ({ locals, params, url }) => {
   const user = locals.user;
@@ -18,37 +19,81 @@ export const GET: APIRoute = async ({ locals, params, url }) => {
   if (!reel) return json({ error: 'Not found' }, 404);
 
   try {
-    if (reel.status === 'image_generating' && reel.provider && reel.provider_job_id) {
-      const st = await pollImage(reel.provider, reel.provider_job_id);
-      if (st.state === 'complete') {
-        const url = await archiveToBlob(st.url, `studio/${reel.id}/image.jpg`, 'image/jpeg');
-        await updateReel(reel.id, { status: 'image_ready', image_url: url, clearError: true },
-          { stage: 'image', msg: 'Imagine generată, așteaptă aprobare' });
-      } else if (st.state === 'failed') {
-        await updateReel(reel.id, { status: 'image_failed', error_message: st.error },
-          { stage: 'image', msg: `Eroare: ${st.error}` });
+    const sb = reel.storyboard;
+
+    if (sb && reel.status === 'image_generating') {
+      let changed = false;
+      for (const scene of sb.scenes) {
+        if (scene.image.status !== 'generating' || !scene.image.provider || !scene.image.jobId) continue;
+        const st = await pollImage(scene.image.provider, scene.image.jobId);
+        if (st.state === 'complete') {
+          scene.image.url = await archiveToBlob(st.url, `studio/${reel.id}/scene${scene.n}.jpg`, 'image/jpeg');
+          scene.image.status = 'ready';
+          changed = true;
+        } else if (st.state === 'failed') {
+          scene.image.status = 'failed';
+          scene.image.error = st.error;
+          changed = true;
+        }
       }
-    } else if (reel.status === 'video_generating' && reel.provider && reel.provider_job_id) {
-      const st = await pollVideo(reel.provider, reel.provider_job_id);
-      if (st.state === 'complete') {
-        let finalUrl = await archiveToBlob(st.url, `studio/${reel.id}/reel.mp4`, 'video/mp4');
-        let msg = 'Reel finalizat';
-        if (reel.mode === 'scene') {
-          // Brief requires a 15-30s final reel; the scene clip is ~8s → loop 3x (24s).
-          try {
-            const absolute = finalUrl.startsWith('/') ? new URL(finalUrl, url.origin).toString() : finalUrl;
-            finalUrl = await assembleSceneReel(absolute, reel.id);
-            msg = 'Reel finalizat, 24s (clip extins 3x)';
-          } catch (e: any) {
-            console.error('[studio/assemble] fallback to raw clip:', e?.message);
-            msg = 'Reel finalizat (clip brut, asamblarea a eșuat)';
+      if (changed) {
+        await setStoryboard(reel.id, sb);
+        const failed = sb.scenes.filter(s => s.image.status === 'failed');
+        const pending = sb.scenes.filter(s => ['pending', 'generating'].includes(s.image.status));
+        if (pending.length === 0) {
+          if (failed.length > 0) {
+            await updateReel(reel.id, { status: 'image_failed', error_message: failed[0].image.error ?? 'Imagine eșuată' },
+              { stage: 'image', msg: `Scenele ${failed.map(s => s.n).join(', ')} au eșuat` });
+          } else {
+            await updateReel(reel.id, { status: 'image_ready', image_url: sb.scenes[0].image.url ?? null, clearError: true },
+              { stage: 'image', msg: 'Toate imaginile gata, așteaptă aprobare' });
           }
         }
-        await updateReel(reel.id, { status: 'complete', video_url: finalUrl, clearError: true },
-          { stage: 'video', msg });
-      } else if (st.state === 'failed') {
-        await updateReel(reel.id, { status: 'video_failed', error_message: st.error },
-          { stage: 'video', msg: `Eroare: ${st.error}` });
+      }
+    } else if (sb && reel.status === 'video_generating') {
+      let changed = false;
+      for (const scene of sb.scenes) {
+        if (scene.video.status !== 'generating' || !scene.video.provider || !scene.video.jobId) continue;
+        const st = await pollVideo(scene.video.provider, scene.video.jobId);
+        if (st.state === 'complete') {
+          scene.video.url = await archiveToBlob(st.url, `studio/${reel.id}/scene${scene.n}.mp4`, 'video/mp4');
+          scene.video.status = 'ready';
+          changed = true;
+        } else if (st.state === 'failed') {
+          scene.video.status = 'failed';
+          scene.video.error = st.error;
+          changed = true;
+        }
+      }
+      if (changed) {
+        await setStoryboard(reel.id, sb);
+        const failed = sb.scenes.filter(s => s.video.status === 'failed');
+        const pending = sb.scenes.filter(s => ['pending', 'generating'].includes(s.video.status));
+        if (pending.length === 0) {
+          if (failed.length > 0) {
+            await updateReel(reel.id, { status: 'video_failed', error_message: failed[0].video.error ?? 'Video eșuat' },
+              { stage: 'video', msg: `Scenele ${failed.map(s => s.n).join(', ')} au eșuat` });
+          } else {
+            // All clips in → final cut
+            let finalUrl: string;
+            let msg: string;
+            try {
+              const abs = (u: string) => (u.startsWith('/') ? new URL(u, url.origin).toString() : u);
+              finalUrl = await assembleReel({
+                clipUrls: sb.scenes.map(s => abs(s.video.url!)),
+                audioUrl: reel.audio_url ? abs(reel.audio_url) : null,
+                reelId: reel.id,
+              });
+              msg = `Reel finalizat: ${sb.scenes.length} scene ancorate, ~${sb.scenes.length * 8}s`;
+            } catch (e: any) {
+              console.error('[studio/assemble] fallback to first clip:', e?.message);
+              finalUrl = sb.scenes[0].video.url!;
+              msg = 'Reel finalizat (asamblarea a eșuat, primul clip)';
+            }
+            await updateReel(reel.id, { status: 'complete', video_url: finalUrl, clearError: true },
+              { stage: 'video', msg });
+          }
+        }
       }
     }
   } catch (e: any) {
