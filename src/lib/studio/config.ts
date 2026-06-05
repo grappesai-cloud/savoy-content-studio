@@ -43,6 +43,17 @@ export const GIRAFFE_POSES = [
 ] as const;
 export type GiraffePoseId = (typeof GIRAFFE_POSES)[number]['id'];
 
+// Real hotel photos (provided by the team), pre-cropped to 9:16. In giraffe
+// mode the storyboard can place the character INTO these via deterministic
+// ffmpeg compositing — the composite becomes the Kling anchor, so the giraffe
+// moves inside the real hotel with zero identity risk.
+export const BACKDROPS = [
+  { id: 'receptie',     label: 'Recepția',      file: '/studio/backdrops/receptie.jpg' },
+  { id: 'receptie-wide', label: 'Lobby',        file: '/studio/backdrops/receptie-wide.jpg' },
+  { id: 'loc-de-joaca', label: 'Locul de joacă', file: '/studio/backdrops/loc-de-joaca.jpg' },
+] as const;
+export type BackdropId = (typeof BACKDROPS)[number]['id'];
+
 export const GIRAFFE_IDENTITY_LOCK = `
 CHARACTER IDENTITY — LOCKED VISUAL ASSET, DO NOT REDESIGN:
 The cartoon giraffe "Domnul Girafă" must match the reference image EXACTLY:

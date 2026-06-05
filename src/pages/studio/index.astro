@@ -3,7 +3,7 @@
 // identity-locked stills → ONE approval gate → 3 motion clips → final cut.
 // Same design language as Savoy Admin (night, gold, Fraunces).
 import { listReels } from '../../lib/studio/db';
-import { GIRAFFE_POSES } from '../../lib/studio/config';
+import { GIRAFFE_POSES, BACKDROPS } from '../../lib/studio/config';
 
 const authUser = Astro.locals.user;
 if (!authUser) return Astro.redirect('/sign-in?next=/studio');
@@ -254,12 +254,14 @@ const STATUS_LABEL: Record<string, string> = {
   </style>
 
   <script type="application/json" id="poses-json" set:html={JSON.stringify(GIRAFFE_POSES.map(p => ({ id: p.id, label: p.label })))} />
+  <script type="application/json" id="backdrops-json" set:html={JSON.stringify(BACKDROPS.map(b => ({ id: b.id, label: b.label })))} />
 
   <script>
     import { upload } from '@vercel/blob/client';
 
     const $ = (id: string) => document.getElementById(id)!;
     const POSES: Array<{ id: string; label: string }> = JSON.parse($('poses-json').textContent!);
+    const BACKDROPS: Array<{ id: string; label: string }> = JSON.parse($('backdrops-json').textContent!);
 
     let mode: 'scene' | 'giraffe' | 'overlay' = 'scene';
     let reelId: string | null = null;
@@ -371,12 +373,15 @@ const STATUS_LABEL: Record<string, string> = {
             <textarea rows="2" data-f="dialogue" data-n="${s.n}"></textarea>
             <span class="st-scene-label">Poza girafei</span>
             <select data-f="pose" data-n="${s.n}">${POSES.map(p => `<option value="${p.id}">${p.label}</option>`).join('')}</select>
+            <span class="st-scene-label">Decorul (foto reală din hotel)</span>
+            <select data-f="backdrop" data-n="${s.n}"><option value="none">Fundal curat</option>${BACKDROPS.map(b => `<option value="${b.id}">${b.label}</option>`).join('')}</select>
           ` : ''}`;
         grid.appendChild(card);
         (card.querySelector('[data-f="description"]') as HTMLTextAreaElement).value = s.description;
         if (mode === 'giraffe') {
           (card.querySelector('[data-f="dialogue"]') as HTMLTextAreaElement).value = s.dialogue ?? '';
           (card.querySelector('[data-f="pose"]') as HTMLSelectElement).value = s.pose ?? POSES[0].id;
+          (card.querySelector('[data-f="backdrop"]') as HTMLSelectElement).value = s.backdrop ?? 'none';
         }
       });
     }

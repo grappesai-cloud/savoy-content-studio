@@ -6,7 +6,8 @@ import type { APIRoute } from 'astro';
 import { json } from '../../../../../lib/api-utils';
 import { getReel, updateReel, setStoryboard } from '../../../../../lib/studio/db';
 import { submitImage } from '../../../../../lib/studio/providers';
-import { GIRAFFE_MASTER_IMAGE, GIRAFFE_POSES, STUDIO_MOCK, publicAssetBase } from '../../../../../lib/studio/config';
+import { GIRAFFE_MASTER_IMAGE, GIRAFFE_POSES, BACKDROPS, STUDIO_MOCK, publicAssetBase } from '../../../../../lib/studio/config';
+import { compositeAnchor } from '../../../../../lib/studio/anchor';
 import { e } from '../../../../../lib/env';
 
 const ALLOWED = new Set(['storyboard_ready', 'image_generating', 'image_ready', 'image_failed']);
@@ -41,6 +42,25 @@ export const POST: APIRoute = async ({ locals, params, request, url }) => {
     const assetBase = publicAssetBase(url.origin);
     const pose = GIRAFFE_POSES.find(p => p.id === scene.pose);
     if (directAnchors) {
+      const backdrop = BACKDROPS.find(b => b.id === scene.backdrop);
+      if (backdrop) {
+        // Giraffe composited INTO the real hotel photo (deterministic ffmpeg).
+        // Inputs are fetched server-side (url.origin works even in local dev);
+        // the OUTPUT anchor lands on Blob, which is what Kling fetches.
+        try {
+          const anchorUrl = await compositeAnchor({
+            backdropUrl: new URL(backdrop.file, url.origin).toString(),
+            poseAlphaUrl: new URL(`/studio/poses/alpha/${pose?.id ?? 'wave'}.png`, url.origin).toString(),
+            reelId: reel.id,
+            sceneN: scene.n,
+          });
+          scene.image = { status: 'ready', provider: 'composite', url: anchorUrl };
+          submitted++;
+          continue;
+        } catch (err: any) {
+          console.error('[studio/anchor] composite failed, falling back to pose:', err?.message);
+        }
+      }
       const file = pose?.file ?? GIRAFFE_MASTER_IMAGE;
       scene.image = { status: 'ready', provider: 'pose-pack', url: new URL(file, assetBase).toString() };
       submitted++;

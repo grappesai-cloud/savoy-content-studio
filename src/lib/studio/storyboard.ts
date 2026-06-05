@@ -8,7 +8,7 @@
 // on mock, the creative step is real. Falls back to a deterministic template.
 
 import { e } from '../env';
-import { GIRAFFE_POSES } from './config';
+import { GIRAFFE_POSES, BACKDROPS } from './config';
 
 export interface SceneJob {
   provider?: string;
@@ -23,6 +23,7 @@ export interface StoryScene {
   description: string;   // still image: where the giraffe is, what the frame looks like
   motion: string;        // what MOVES in this clip (character action + camera)
   pose: string | null;   // official pose id used as identity/pose reference
+  backdrop: string | null; // real hotel photo id — giraffe gets composited into it
   dialogue: string | null; // giraffe mode: this scene's line
   image: SceneJob;
   video: SceneJob;
@@ -32,6 +33,7 @@ export interface Storyboard { scenes: StoryScene[] }
 
 const CLAUDE_MODEL = 'claude-sonnet-4-6';
 const POSE_IDS = GIRAFFE_POSES.map(p => p.id);
+const BACKDROP_IDS = BACKDROPS.map(b => b.id);
 
 export async function generateStoryboard(opts: {
   mode: 'scene' | 'giraffe';
@@ -68,11 +70,12 @@ async function claudeStoryboard(key: string, opts: {
               type: 'array', minItems: 3, maxItems: 3,
               items: {
                 type: 'object',
-                required: ['description', 'motion', 'pose', 'dialogue'],
+                required: ['description', 'motion', 'pose', 'backdrop', 'dialogue'],
                 properties: {
                   description: { type: 'string', description: 'The STILL image: setting, framing, light. Romanian. 9:16 vertical. Do NOT describe the character design.' },
                   motion: { type: 'string', description: 'What moves in this 8s clip: ONE simple character action + subtle camera move. English, for a video model.' },
                   pose: { type: 'string', enum: giraffe ? POSE_IDS : ['none'], description: 'Closest official pose for this scene' },
+                  backdrop: { type: ['string', 'null'], enum: giraffe ? [...BACKDROP_IDS, null] : [null], description: 'Real hotel photo to place the character into, if one fits the scene; null = clean brand background' },
                   dialogue: { type: ['string', 'null'], description: giraffe ? 'This scene\'s slice of the dialogue, verbatim words from the original, split naturally.' : 'null' },
                 },
               },
@@ -86,6 +89,8 @@ async function claudeStoryboard(key: string, opts: {
 
 IDEE: ${opts.scenePrompt}
 ${giraffe ? `REPLICA INTEGRALĂ: ${opts.dialogue}` : ''}
+
+FUNDALURI REALE DISPONIBILE (fotografii adevărate din hotel, personajul poate fi plasat în ele): receptie = recepția elegantă cu marmură verde, receptie-wide = lobby-ul larg, loc-de-joaca = locul de joacă gonflabil de pe plajă. Folosește-le când scena se potrivește (ex: bun venit → receptie, distracție copii → loc-de-joaca); null pentru fundal curat de brand.
 
 Reguli: scena 1 e hook-ul (cea mai spectaculoasă), scena 3 închide cu CTA vizual. Mișcările simple, o singură acțiune pe scenă.`,
       }],
@@ -102,6 +107,7 @@ Reguli: scena 1 e hook-ul (cea mai spectaculoasă), scena 3 închide cu CTA vizu
       description: String(s.description ?? ''),
       motion: String(s.motion ?? ''),
       pose: opts.mode === 'giraffe' && POSE_IDS.includes(s.pose) ? s.pose : null,
+      backdrop: opts.mode === 'giraffe' && BACKDROP_IDS.includes(s.backdrop) ? s.backdrop : null,
       dialogue: opts.mode === 'giraffe' ? (s.dialogue ? String(s.dialogue) : null) : null,
       image: { status: 'pending' },
       video: { status: 'pending' },
@@ -127,6 +133,7 @@ function templateStoryboard(opts: { mode: 'scene' | 'giraffe'; scenePrompt: stri
       description: b.d,
       motion: b.m,
       pose: poses[i],
+      backdrop: null,
       dialogue: parts[i],
       image: { status: 'pending' },
       video: { status: 'pending' },
