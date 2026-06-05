@@ -65,8 +65,11 @@ export const GET: APIRoute = async ({ locals, params, url }) => {
           changed = true;
         }
       }
-      if (changed) {
-        await setStoryboard(reel.id, sb);
+      if (changed) await setStoryboard(reel.id, sb);
+      {
+        // Completion check runs on EVERY poll (not only when a scene just
+        // flipped) — if the process died between "last scene ready" and
+        // assembly, the next poll picks it up instead of stalling forever.
         const failed = sb.scenes.filter(s => s.video.status === 'failed');
         const pending = sb.scenes.filter(s => ['pending', 'generating'].includes(s.video.status));
         if (pending.length === 0) {
