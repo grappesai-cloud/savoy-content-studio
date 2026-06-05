@@ -18,6 +18,17 @@ export const STUDIO_MOCK = () => e('STUDIO_MOCK') === '1' || !e('HIGGSFIELD_API_
 
 export const GIRAFFE_MASTER_IMAGE = '/studio/girafa.jpg';
 
+// Providers must be able to FETCH our reference assets. In local dev
+// url.origin is localhost, which Kling/Nano Banana can't reach — point
+// provider-facing asset URLs at the live deployment instead.
+export function publicAssetBase(requestOrigin: string): string {
+  const override = e('STUDIO_PUBLIC_BASE');
+  if (override) return override;
+  return /localhost|127\.0\.0\.1/.test(requestOrigin)
+    ? 'https://savoy-content-studio.vercel.app'
+    : requestOrigin;
+}
+
 // Sponsor-provided pose pack (distinct poses from the official asset set).
 // In giraffe mode the user can pick one; it rides along with the master image
 // as a second reference so the model copies the pose without drifting identity.

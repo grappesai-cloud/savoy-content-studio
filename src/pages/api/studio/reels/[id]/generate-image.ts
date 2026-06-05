@@ -6,7 +6,8 @@ import type { APIRoute } from 'astro';
 import { json } from '../../../../../lib/api-utils';
 import { getReel, updateReel, setStoryboard } from '../../../../../lib/studio/db';
 import { submitImage } from '../../../../../lib/studio/providers';
-import { GIRAFFE_MASTER_IMAGE, GIRAFFE_POSES } from '../../../../../lib/studio/config';
+import { GIRAFFE_MASTER_IMAGE, GIRAFFE_POSES, STUDIO_MOCK, publicAssetBase } from '../../../../../lib/studio/config';
+import { e } from '../../../../../lib/env';
 
 const ALLOWED = new Set(['storyboard_ready', 'image_generating', 'image_ready', 'image_failed']);
 
@@ -26,17 +27,30 @@ export const POST: APIRoute = async ({ locals, params, request, url }) => {
 
   const withGiraffe = reel.mode === 'giraffe';
   const storyboard = reel.storyboard;
+  // Until the sponsor confirms the Nano Banana model path, giraffe anchors
+  // come STRAIGHT from the official pose pack: identity is perfect by
+  // definition (they ARE the brand asset) and Kling animates from them
+  // beautifully (verified live). Flip by setting HIGGSFIELD_IMAGE_MODEL_GIRAFFE.
+  const directAnchors = withGiraffe && !e('HIGGSFIELD_IMAGE_MODEL_GIRAFFE') && !STUDIO_MOCK();
   let submitted = 0;
 
   for (const scene of storyboard.scenes) {
     if (onlyScene !== null && scene.n !== onlyScene) continue;
     if (onlyScene === null && scene.image.status === 'ready') continue;
 
+    const assetBase = publicAssetBase(url.origin);
     const pose = GIRAFFE_POSES.find(p => p.id === scene.pose);
+    if (directAnchors) {
+      const file = pose?.file ?? GIRAFFE_MASTER_IMAGE;
+      scene.image = { status: 'ready', provider: 'pose-pack', url: new URL(file, assetBase).toString() };
+      submitted++;
+      continue;
+    }
+
     const refImageUrls = withGiraffe
       ? [
-          new URL(GIRAFFE_MASTER_IMAGE, url.origin).toString(),
-          ...(pose ? [new URL(pose.file, url.origin).toString()] : []),
+          new URL(GIRAFFE_MASTER_IMAGE, assetBase).toString(),
+          ...(pose ? [new URL(pose.file, assetBase).toString()] : []),
         ]
       : undefined;
     try {
@@ -55,7 +69,13 @@ export const POST: APIRoute = async ({ locals, params, request, url }) => {
   if (submitted === 0) return json({ error: 'Nicio scenă de generat.' }, 409);
 
   await setStoryboard(reel.id, storyboard);
-  await updateReel(reel.id, { status: 'image_generating', bump: 'image_attempts', clearError: true },
-    { stage: 'image', msg: `Generare imagini: ${submitted} scen${submitted === 1 ? 'ă' : 'e'}` });
+  const allReady = storyboard.scenes.every(s => s.image.status === 'ready');
+  await updateReel(reel.id, {
+    status: allReady ? 'image_ready' : 'image_generating',
+    bump: 'image_attempts',
+    clearError: true,
+  }, { stage: 'image', msg: allReady
+    ? 'Ancore directe din pozele oficiale, identitate garantată'
+    : `Generare imagini: ${submitted} scen${submitted === 1 ? 'ă' : 'e'}` });
   return json({ ok: true, submitted });
 };
