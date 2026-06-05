@@ -68,13 +68,25 @@ const STATUS_LABEL: Record<string, string> = {
           <span class="st-mode-ic">🦒</span><strong>Girafa vorbește</strong>
           <span>Domnul Girafă joacă în 3 scene și spune replica ta.</span>
         </button>
+        <button class="st-mode" data-mode="overlay" type="button">
+          <span class="st-mode-ic">🎬</span><strong>Peste video-ul tău</strong>
+          <span>Încarci footage-ul vostru, girafa apare peste el și comentează.</span>
+        </button>
       </div>
       <label class="st-label" for="title">Nume reel</label>
       <input id="title" class="st-input" type="text" maxlength="80" placeholder="ex: Weekend la piscină" />
-      <label class="st-label" for="scene">Ideea</label>
-      <textarea id="scene" class="st-input" rows="3" placeholder="ex: Girafa își petrece ziua la piscina hotelului, de dimineața până la apus"></textarea>
+      <div id="scene-row">
+        <label class="st-label" for="scene">Ideea</label>
+        <textarea id="scene" class="st-input" rows="3" placeholder="ex: Girafa își petrece ziua la piscina hotelului, de dimineața până la apus"></textarea>
+      </div>
+      <div id="overlay-row" hidden>
+        <label class="st-label" for="footage">Video-ul tău <span class="st-hint">(MP4/MOV, max 200MB)</span></label>
+        <input id="footage" class="st-input" type="file" accept="video/mp4,video/quicktime,video/webm" />
+        <label class="st-label" for="ov-pose">Poza girafei</label>
+        <select id="ov-pose" class="st-input"></select>
+      </div>
       <div id="dialogue-row" hidden>
-        <label class="st-label" for="dialogue">Ce spune Domnul Girafă <span class="st-hint">(~40-80 de cuvinte = 15-30s)</span></label>
+        <label class="st-label" for="dialogue">Ce spune Domnul Girafă <span class="st-hint" id="dialogue-hint">(~40-80 de cuvinte = 15-30s)</span></label>
         <textarea id="dialogue" class="st-input" rows="3" maxlength="400" placeholder="ex: Salutare! Azi vă arăt cum arată o zi perfectă la Savoy. Spoiler: implică două înghețate."></textarea>
       </div>
       <button class="st-btn st-btn-gold" id="btn-create" type="button">Generează storyboard-ul →</button>
@@ -133,7 +145,7 @@ const STATUS_LABEL: Record<string, string> = {
           {recent.map(r => (
             <li>
               <a href={`/studio?reel=${r.id}`}>
-                <span>{r.mode === 'giraffe' ? '🦒' : '🏖️'} {r.title}</span>
+                <span>{r.mode === 'giraffe' ? '🦒' : r.mode === 'overlay' ? '🎬' : '🏖️'} {r.title}</span>
                 <span class="st-mono st-dim">{timeAgo(r.created_at)} · {STATUS_LABEL[r.status] ?? r.status}</span>
               </a>
             </li>
@@ -175,8 +187,8 @@ const STATUS_LABEL: Record<string, string> = {
     @keyframes pulse { 50% { opacity: 0.35; } }
 
     .st-card { background: var(--panel); border: 1px solid rgba(250,244,232,0.08); border-radius: 20px; padding: 28px; }
-    .st-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px; }
-    @media (max-width: 600px) { .st-modes { grid-template-columns: 1fr; } }
+    .st-modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 10px; }
+    @media (max-width: 760px) { .st-modes { grid-template-columns: 1fr; } }
     .st-mode { text-align: left; background: rgba(250,244,232,0.03); border: 1px solid rgba(250,244,232,0.12); border-radius: 14px; padding: 16px; cursor: pointer; color: var(--cream); transition: all 0.2s; }
     .st-mode.active { border-color: var(--gold); background: rgba(255,179,0,0.08); }
     .st-mode-ic { font-size: 22px; display: block; margin-bottom: 8px; }
@@ -244,20 +256,56 @@ const STATUS_LABEL: Record<string, string> = {
   <script type="application/json" id="poses-json" set:html={JSON.stringify(GIRAFFE_POSES.map(p => ({ id: p.id, label: p.label })))} />
 
   <script>
+    import { upload } from '@vercel/blob/client';
+
     const $ = (id: string) => document.getElementById(id)!;
     const POSES: Array<{ id: string; label: string }> = JSON.parse($('poses-json').textContent!);
 
-    let mode: 'scene' | 'giraffe' = 'scene';
+    let mode: 'scene' | 'giraffe' | 'overlay' = 'scene';
     let reelId: string | null = null;
     let board: any = null;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+    ($('ov-pose') as HTMLSelectElement).innerHTML =
+      POSES.map(p => `<option value="${p.id}">${p.label}</option>`).join('');
 
     document.querySelectorAll<HTMLButtonElement>('.st-mode').forEach(b => b.addEventListener('click', () => {
       document.querySelectorAll('.st-mode').forEach(x => x.classList.remove('active'));
       b.classList.add('active');
       mode = b.dataset.mode as any;
-      $('dialogue-row').hidden = mode !== 'giraffe';
+      $('scene-row').hidden = mode === 'overlay';
+      $('overlay-row').hidden = mode !== 'overlay';
+      $('dialogue-row').hidden = mode === 'scene';
+      $('dialogue-hint').textContent = mode === 'overlay' ? '(opțional, girafa comentează peste video)' : '(~40-80 de cuvinte = 15-30s)';
+      ($('btn-create') as HTMLButtonElement).textContent =
+        mode === 'overlay' ? 'Pune girafa pe video →' : 'Generează storyboard-ul →';
     }));
+
+    // ── Mode 3: upload footage → ffmpeg overlay (synchronous)
+    async function runOverlay() {
+      const btn = $('btn-create') as HTMLButtonElement, err = $('brief-error');
+      const file = ($('footage') as HTMLInputElement).files?.[0];
+      if (!file) throw new Error('Alege un fișier video.');
+      btn.textContent = 'Se încarcă video-ul…';
+      const blob = await upload(`studio/uploads/${file.name}`, file, {
+        access: 'public',
+        handleUploadUrl: '/api/studio/upload',
+      });
+      btn.textContent = 'Domnul Girafă intră în cadru…';
+      const res = await fetch('/api/studio/overlay', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoUrl: blob.url,
+          title: ($('title') as HTMLInputElement).value,
+          dialogue: ($('dialogue') as HTMLTextAreaElement).value,
+          pose: ($('ov-pose') as HTMLSelectElement).value,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Eroare.');
+      reelId = data.id;
+      renderDone({ video_url: data.videoUrl });
+    }
 
     const api = async (path: string, opts: RequestInit = {}) => {
       const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
@@ -280,10 +328,17 @@ const STATUS_LABEL: Record<string, string> = {
       });
     }
 
-    // ── Brief → create + storyboard
+    // ── Brief → create + storyboard (or overlay)
     $('btn-create').addEventListener('click', async () => {
       const btn = $('btn-create') as HTMLButtonElement, err = $('brief-error');
-      err.hidden = true; btn.disabled = true; btn.textContent = 'Domnul Girafă gândește…';
+      err.hidden = true; btn.disabled = true;
+      if (mode === 'overlay') {
+        try { await runOverlay(); }
+        catch (e: any) { err.textContent = e.message; err.hidden = false; }
+        finally { btn.disabled = false; btn.textContent = 'Pune girafa pe video →'; }
+        return;
+      }
+      btn.textContent = 'Domnul Girafă gândește…';
       try {
         const { id } = await api('/api/studio/reels', { method: 'POST', body: JSON.stringify({
           mode,
