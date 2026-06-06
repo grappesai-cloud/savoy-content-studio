@@ -215,7 +215,10 @@ export async function submitVideo(opts: {
   const jobId = await hfSubmit(VIDEO_MODEL, {
     image_url: opts.imageUrl,
     ...(opts.endImageUrl ? { end_image_url: opts.endImageUrl } : {}),
-    prompt: `${opts.motionPrompt} The cartoon character keeps EXACTLY this design, flat 2D cartoon style, no redesign. The giraffe has black HOOVES, never fingers, never hands, never gloves.`,
+    prompt: `${opts.motionPrompt} The cartoon character keeps EXACTLY this design, flat 2D cartoon style, no redesign. The giraffe has black HOOVES, never fingers, never hands, never gloves. The giraffe has exactly TWO arms and TWO legs — never extra limbs, never duplicated body parts.`,
+    // Kling honors negative_prompt on this platform; unknown fields are
+    // silently ignored, so this is safe even if the model path changes.
+    negative_prompt: 'extra limbs, extra arms, third arm, duplicated limbs, deformed hands, fingers, gloves, mutated anatomy, redesigned character',
     duration: 5,
   });
   return { jobId, provider: 'higgsfield' };
