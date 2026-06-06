@@ -37,12 +37,6 @@ async function clipInfo(path: string): Promise<{ dur: number; fps: number }> {
 }
 const clipDuration = async (path: string) => (await clipInfo(path)).dur;
 
-// drawtext is picky about special characters; typographic swaps beat escapes.
-function drawtextEsc(s: string): string {
-  return s.replace(/\\/g, '＼').replace(/'/g, '’').replace(/:/g, '\\:')
-    .replace(/%/g, '\\%').replace(/,/g, '\\,');
-}
-
 // Wrap a replica into lines of ~26 chars so it reads at reel size.
 function wrapText(s: string, max = 26): string {
   const words = s.split(/\s+/);
@@ -53,7 +47,33 @@ function wrapText(s: string, max = 26): string {
     else cur = (cur + ' ' + w).trim();
   }
   if (cur) lines.push(cur);
-  return lines.join('\n');
+  return lines.join('\\N'); // ASS newline
+}
+
+// Subtitles ship as an ASS file through the `subtitles` filter (libass) —
+// the Vercel ffmpeg-static build (7.0.2) has libass but NOT drawtext
+// (built without harfbuzz; verified in prod logs).
+function assTime(t: number): string {
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`;
+}
+
+function buildAss(cues: Array<{ start: number; end: number; text: string }>): string {
+  const header = `[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Reel,Poppins SemiBold,58,&H00FFFFFF,&H00FFFFFF,&H8C000000,&H8C000000,0,0,0,0,100,100,0,0,3,14,0,2,90,90,330,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+  const lines = cues.map(c =>
+    `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Reel,,0,0,0,,${c.text}`);
+  return header + lines.join('\n') + '\n';
 }
 
 export async function assembleReel(opts: {
@@ -152,30 +172,24 @@ export async function assembleReel(opts: {
       // makes phoneme-accuracy irrelevant. Needs the re-encode anyway.
       const texts = opts.sceneTexts ?? [];
       let vfilter = '[0:v]null[v]';
-      let font: string | null = null;
       if (texts.some(Boolean) && opts.fontUrl) {
         try {
           const fres = await fetch(opts.fontUrl);
           if (!fres.ok) throw new Error(`font fetch ${fres.status}`);
-          font = join(dir, 'font.ttf');
-          await writeFile(font, Buffer.from(await fres.arrayBuffer()));
-          const draws: string[] = [];
+          await writeFile(join(dir, 'Poppins-SemiBold.ttf'), Buffer.from(await fres.arrayBuffer()));
+          const cues: Array<{ start: number; end: number; text: string }> = [];
           let t0 = 0;
           for (let i = 0; i < clips.length; i++) {
             const text = texts[i];
             const t1 = t0 + durations[i];
-            if (text) {
-              draws.push(
-                `drawtext=fontfile='${font}':text='${drawtextEsc(wrapText(text))}'` +
-                `:fontsize=52:fontcolor=white:line_spacing=10` +
-                `:box=1:boxcolor=black@0.45:boxborderw=18` +
-                `:x=(w-text_w)/2:y=h*0.80-text_h/2` +
-                `:enable='between(t,${t0.toFixed(2)},${(t1 - 0.05).toFixed(2)})'`
-              );
-            }
+            if (text) cues.push({ start: t0, end: t1 - 0.05, text: wrapText(text) });
             t0 = t1;
           }
-          if (draws.length) vfilter = `[0:v]${draws.join(',')}[v]`;
+          if (cues.length) {
+            const ass = join(dir, 'subs.ass');
+            await writeFile(ass, buildAss(cues));
+            vfilter = `[0:v]subtitles='${ass}':fontsdir='${dir}'[v]`;
+          }
         } catch (err: any) {
           console.error('[studio/assemble] subtitles skipped:', err?.message);
         }
