@@ -16,6 +16,11 @@ export interface SceneJob {
   url?: string | null;
   status: 'pending' | 'generating' | 'ready' | 'failed';
   error?: string;
+  // video QC: the submit params are stashed so a failed inspection can
+  // resubmit the exact same job without re-deriving the prompt
+  prompt?: string;
+  talking?: boolean;
+  retries?: number;
 }
 
 export interface StoryScene {

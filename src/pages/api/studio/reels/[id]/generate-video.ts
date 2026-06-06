@@ -60,7 +60,10 @@ export const POST: APIRoute = async ({ locals, params }) => {
           motionPrompt,
           talking: Boolean(talking),
         });
-        scene.video = { status: 'generating', provider, jobId, url: null };
+        scene.video = {
+          status: 'generating', provider, jobId, url: null,
+          prompt: motionPrompt, talking: Boolean(talking), retries: 0,
+        };
         submitted++;
       } catch (e: any) {
         scene.video = { status: 'failed', error: e?.message };

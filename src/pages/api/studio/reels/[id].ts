@@ -8,9 +8,11 @@
 import type { APIRoute } from 'astro';
 import { json } from '../../../../lib/api-utils';
 import { getReel, updateReel, setStoryboard, claimAssembly } from '../../../../lib/studio/db';
-import { pollImage, pollVideo, archiveToBlob } from '../../../../lib/studio/providers';
+import { pollImage, pollVideo, archiveToBlob, submitVideo } from '../../../../lib/studio/providers';
 import { assembleReel } from '../../../../lib/studio/assemble';
 import { upscaleAnchor } from '../../../../lib/studio/anchor';
+import { verifyClip } from '../../../../lib/studio/qc';
+import { GIRAFFE_MASTER_IMAGE, publicAssetBase } from '../../../../lib/studio/config';
 
 async function runAssembly(
   reel: NonNullable<Awaited<ReturnType<typeof getReel>>>,
@@ -92,6 +94,38 @@ export const GET: APIRoute = async ({ locals, params, url }) => {
         if (scene.video.status !== 'generating' || !scene.video.provider || !scene.video.jobId) continue;
         const st = await pollVideo(scene.video.provider, scene.video.jobId);
         if (st.state === 'complete') {
+          // QC gate: Claude inspects frames against the official reference.
+          // A broken character (extra limbs, fingers, redesign, morphed
+          // humans) never reaches the user — the scene resubmits instead.
+          const verdict = reel.mode === 'giraffe'
+            ? await verifyClip({
+                clipUrl: st.url,
+                referenceUrl: new URL(GIRAFFE_MASTER_IMAGE, publicAssetBase(url.origin)).toString(),
+                talking: Boolean(scene.video.talking),
+                hasRealPeople: Boolean(scene.backdrop),
+              })
+            : { pass: true, problems: [] as string[] };
+          if (!verdict.pass && (scene.video.retries ?? 0) < 1 && scene.video.prompt && scene.image.url) {
+            try {
+              const { jobId, provider } = await submitVideo({
+                imageUrl: scene.image.url,
+                motionPrompt: scene.video.prompt,
+                talking: Boolean(scene.video.talking),
+              });
+              scene.video = {
+                ...scene.video, status: 'generating', provider, jobId, url: null,
+                retries: (scene.video.retries ?? 0) + 1,
+              };
+              changed = true;
+              await updateReel(reel.id, {}, {
+                stage: 'qc',
+                msg: `Scena ${scene.n}: control de calitate picat (${verdict.problems.slice(0, 2).join('; ') || 'defect vizual'}), regenerez automat`,
+              });
+              continue;
+            } catch (err: any) {
+              console.error('[studio/qc] resubmit failed, keeping clip:', err?.message);
+            }
+          }
           scene.video.url = await archiveToBlob(st.url, `studio/${reel.id}/scene${scene.n}.mp4`, 'video/mp4');
           scene.video.status = 'ready';
           changed = true;
