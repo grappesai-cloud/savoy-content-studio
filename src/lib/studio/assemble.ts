@@ -29,10 +29,32 @@ async function clipDuration(path: string): Promise<number> {
   throw new Error(`Could not read duration of ${path}`);
 }
 
+// drawtext is picky about special characters; typographic swaps beat escapes.
+function drawtextEsc(s: string): string {
+  return s.replace(/\\/g, '＼').replace(/'/g, '’').replace(/:/g, '\\:')
+    .replace(/%/g, '\\%').replace(/,/g, '\\,');
+}
+
+// Wrap a replica into lines of ~26 chars so it reads at reel size.
+function wrapText(s: string, max = 26): string {
+  const words = s.split(/\s+/);
+  const lines: string[] = [];
+  let cur = '';
+  for (const w of words) {
+    if ((cur + ' ' + w).trim().length > max && cur) { lines.push(cur); cur = w; }
+    else cur = (cur + ' ' + w).trim();
+  }
+  if (cur) lines.push(cur);
+  return lines.join('\n');
+}
+
 export async function assembleReel(opts: {
   clipUrls: string[];       // absolute URLs, in scene order
   audioUrl?: string | null; // legacy: ONE full read laid over the whole cut
   sceneAudioUrls?: (string | null)[]; // per-scene lines — each aligned to its clip's start
+  sceneTexts?: (string | null)[];     // per-scene replicas — burned as subtitles
+  musicUrl?: string | null;           // license-free bed, mixed under the voice
+  fontUrl?: string | null;            // TTF for drawtext (serverless has no fonts)
   reelId: string;
 }): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'savoy-'));
@@ -66,9 +88,11 @@ export async function assembleReel(opts: {
     let out = cut;
     const sceneAudio = opts.sceneAudioUrls ?? [];
     if (sceneAudio.some(Boolean)) {
+      const durations: number[] = [];
       const segs: string[] = [];
       for (let i = 0; i < clips.length; i++) {
         const dur = await clipDuration(clips[i]);
+        durations.push(dur);
         const seg = join(dir, `aseg${i}.m4a`);
         const lineUrl = sceneAudio[i];
         if (lineUrl) {
@@ -91,10 +115,67 @@ export async function assembleReel(opts: {
         '-filter_complex', `${segs.map((_, i) => `[${i}:a]`).join('')}concat=n=${segs.length}:v=0:a=1[a]`,
         '-map', '[a]', '-c:a', 'aac', track,
       ], { timeout: 120_000 });
+
+      const total = durations.reduce((a, b) => a + b, 0);
+
+      // Subtitles: each replica burned over ITS scene (timed via clip starts).
+      // IG reels mostly play muted — the text carries the message, and it
+      // makes phoneme-accuracy irrelevant. Needs the re-encode anyway.
+      const texts = opts.sceneTexts ?? [];
+      let vfilter = '[0:v]null[v]';
+      let font: string | null = null;
+      if (texts.some(Boolean) && opts.fontUrl) {
+        try {
+          const fres = await fetch(opts.fontUrl);
+          if (!fres.ok) throw new Error(`font fetch ${fres.status}`);
+          font = join(dir, 'font.ttf');
+          await writeFile(font, Buffer.from(await fres.arrayBuffer()));
+          const draws: string[] = [];
+          let t0 = 0;
+          for (let i = 0; i < clips.length; i++) {
+            const text = texts[i];
+            const t1 = t0 + durations[i];
+            if (text) {
+              draws.push(
+                `drawtext=fontfile='${font}':text='${drawtextEsc(wrapText(text))}'` +
+                `:fontsize=52:fontcolor=white:line_spacing=10` +
+                `:box=1:boxcolor=black@0.45:boxborderw=18` +
+                `:x=(w-text_w)/2:y=h*0.80-text_h/2` +
+                `:enable='between(t,${t0.toFixed(2)},${(t1 - 0.05).toFixed(2)})'`
+              );
+            }
+            t0 = t1;
+          }
+          if (draws.length) vfilter = `[0:v]${draws.join(',')}[v]`;
+        } catch (err: any) {
+          console.error('[studio/assemble] subtitles skipped:', err?.message);
+        }
+      }
+
+      // Music bed under the voice: low volume, fade out on the last 1.5s.
+      let music: string | null = null;
+      if (opts.musicUrl) {
+        try {
+          const mres = await fetch(opts.musicUrl);
+          if (!mres.ok) throw new Error(`music fetch ${mres.status}`);
+          music = join(dir, 'bed.mp3');
+          await writeFile(music, Buffer.from(await mres.arrayBuffer()));
+        } catch (err: any) {
+          console.error('[studio/assemble] music skipped:', err?.message);
+        }
+      }
+      const afilter = music
+        ? `[2:a]atrim=0:${total.toFixed(2)},volume=0.16,afade=t=out:st=${Math.max(0, total - 1.5).toFixed(2)}:d=1.5[m];[1:a][m]amix=inputs=2:duration=first:normalize=0[a]`
+        : `[1:a]anull[a]`;
+
       const mixed = join(dir, 'final.mp4');
-      await exec(FF, ['-y', '-i', cut, '-i', track,
-        '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac',
-        '-shortest', '-movflags', '+faststart', mixed], { timeout: 120_000 });
+      await exec(FF, [
+        '-y', '-i', cut, '-i', track, ...(music ? ['-i', music] : []),
+        '-filter_complex', `${vfilter};${afilter}`,
+        '-map', '[v]', '-map', '[a]',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-shortest', '-movflags', '+faststart', mixed,
+      ], { timeout: 300_000 });
       out = mixed;
     } else if (opts.audioUrl) {
       const ares = await fetch(opts.audioUrl);

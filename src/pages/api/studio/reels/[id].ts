@@ -10,6 +10,7 @@ import { json } from '../../../../lib/api-utils';
 import { getReel, updateReel, setStoryboard, claimAssembly } from '../../../../lib/studio/db';
 import { pollImage, pollVideo, archiveToBlob } from '../../../../lib/studio/providers';
 import { assembleReel } from '../../../../lib/studio/assemble';
+import { upscaleAnchor } from '../../../../lib/studio/anchor';
 
 async function runAssembly(
   reel: NonNullable<Awaited<ReturnType<typeof getReel>>>,
@@ -24,6 +25,9 @@ async function runAssembly(
       clipUrls: sb.scenes.map(s => abs(s.video.url!)),
       audioUrl: reel.audio_url ? abs(reel.audio_url) : null, // legacy full read
       sceneAudioUrls: sb.scenes.map(s => (s.audioUrl ? abs(s.audioUrl) : null)),
+      sceneTexts: sb.scenes.map(s => s.dialogue ?? null),
+      musicUrl: abs('/studio/music/bed.mp3'),
+      fontUrl: abs('/studio/fonts/Poppins-SemiBold.ttf'),
       reelId: reel.id,
     });
     msg = `Reel finalizat: ${sb.scenes.length} scene ancorate, ~${sb.scenes.length * 8}s`;
@@ -52,7 +56,14 @@ export const GET: APIRoute = async ({ locals, params, url }) => {
         if (scene.image.status !== 'generating' || !scene.image.provider || !scene.image.jobId) continue;
         const st = await pollImage(scene.image.provider, scene.image.jobId);
         if (st.state === 'complete') {
-          scene.image.url = await archiveToBlob(st.url, `studio/${reel.id}/scene${scene.n}.jpg`, 'image/jpeg');
+          // Kontext outputs 752×1392 — bring every anchor to full 1080×1920
+          // (lanczos + light unsharp) before Kling sees it.
+          try {
+            scene.image.url = await upscaleAnchor(st.url, reel.id, scene.n);
+          } catch (err: any) {
+            console.error('[studio/upscale] keeping original size:', err?.message);
+            scene.image.url = await archiveToBlob(st.url, `studio/${reel.id}/scene${scene.n}.jpg`, 'image/jpeg');
+          }
           scene.image.status = 'ready';
           changed = true;
         } else if (st.state === 'failed') {

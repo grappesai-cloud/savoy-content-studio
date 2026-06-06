@@ -62,3 +62,7 @@ With the sponsor keys (kickoff `config.yaml`): set `HIGGSFIELD_API_KEY`, `ELEVEN
 
 ---
 Built with the Grappes render/credits infrastructure patterns. Team: Alexandru Cojanu.
+
+## Credite
+
+Muzică: "Carefree" — Kevin MacLeod (incompetech.com), licență [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Font subtitrări: Poppins (OFL).

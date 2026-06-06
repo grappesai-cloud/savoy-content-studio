@@ -17,6 +17,34 @@ import { e } from '../env';
 const exec = promisify(execFile);
 const FF = ffmpegPath as unknown as string;
 
+// FLUX Kontext returns 752×1392; Kling follows its input, so a lanczos
+// upscale to full 1080×1920 (+ light unsharp) buys real sharpness on a big
+// screen for free. Returns a Blob URL.
+export async function upscaleAnchor(imageUrl: string, reelId: string, sceneN: number): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'savoy-up-'));
+  try {
+    const res = await fetch(imageUrl);
+    if (!res.ok) throw new Error(`Upscale fetch failed: ${res.status}`);
+    const src = join(dir, 'in.png');
+    await writeFile(src, Buffer.from(await res.arrayBuffer()));
+    const out = join(dir, 'out.jpg');
+    await exec(FF, [
+      '-y', '-i', src,
+      '-vf', 'scale=1080:1920:flags=lanczos,unsharp=5:5:0.4:5:5:0.0',
+      '-frames:v', '1', '-q:v', '2', out,
+    ], { timeout: 60_000 });
+    const blob = await put(`studio/${reelId}/anchor-s${sceneN}-hd.jpg`, await readFile(out), {
+      access: 'public',
+      contentType: 'image/jpeg',
+      addRandomSuffix: true,
+      token: e('BLOB_READ_WRITE_TOKEN'),
+    });
+    return blob.url;
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export async function compositeAnchor(opts: {
   backdropUrl: string;  // absolute URL, 1080x1920
   poseAlphaUrl: string; // absolute URL, alpha-cut pose
