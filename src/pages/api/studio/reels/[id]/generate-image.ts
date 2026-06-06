@@ -5,7 +5,7 @@
 import type { APIRoute } from 'astro';
 import { json } from '../../../../../lib/api-utils';
 import { getReel, updateReel, setStoryboard } from '../../../../../lib/studio/db';
-import { submitImage } from '../../../../../lib/studio/providers';
+import { submitImage, submitIntegrate } from '../../../../../lib/studio/providers';
 import { GIRAFFE_MASTER_IMAGE, GIRAFFE_POSES, BACKDROPS, STUDIO_MOCK, publicAssetBase } from '../../../../../lib/studio/config';
 import { compositeAnchor } from '../../../../../lib/studio/anchor';
 import { e } from '../../../../../lib/env';
@@ -50,11 +50,21 @@ export const POST: APIRoute = async ({ locals, params, request, url }) => {
         try {
           const anchorUrl = await compositeAnchor({
             backdropUrl: new URL(backdrop.file, url.origin).toString(),
-            poseAlphaUrl: new URL(`/studio/poses/alpha/${pose?.id ?? 'wave'}.png`, url.origin).toString(),
+            poseAlphaUrl: new URL(`/studio/poses/alpha/${pose?.id ?? 'walk'}.png`, url.origin).toString(),
             reelId: reel.id,
             sceneN: scene.n,
           });
-          scene.image = { status: 'ready', provider: 'composite', url: anchorUrl };
+          // Anti-sticker pass: FLUX Kontext re-lights the composite (ambient
+          // light on the character, real shadow, reflection) while preserving
+          // the design. Async job — the poll route archives the result. If the
+          // submit fails, the raw composite is still a valid anchor.
+          try {
+            const { jobId, provider } = await submitIntegrate(anchorUrl);
+            scene.image = { status: 'generating', provider, jobId, url: null };
+          } catch (err: any) {
+            console.error('[studio/integrate] kontext submit failed, raw composite kept:', err?.message);
+            scene.image = { status: 'ready', provider: 'composite', url: anchorUrl };
+          }
           submitted++;
           continue;
         } catch (err: any) {

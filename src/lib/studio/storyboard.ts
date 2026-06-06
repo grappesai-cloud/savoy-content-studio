@@ -122,9 +122,9 @@ function templateStoryboard(opts: { mode: 'scene' | 'giraffe'; scenePrompt: stri
   const parts = giraffe && opts.dialogue
     ? splitInThree(opts.dialogue)
     : [null, null, null];
-  const poses = giraffe ? ['wave', 'sit', 'dance'] : [null, null, null];
+  const poses = giraffe ? ['walk', 'selfie', 'dance'] : [null, null, null];
   const beats = [
-    { d: `${opts.scenePrompt}, cadru larg de deschidere, lumină aurie`, m: giraffe ? 'The cartoon giraffe waves warmly at the camera. Slow push-in. Flat 2D cartoon character, design unchanged.' : 'Slow cinematic push-in, golden light, gentle water movement.' },
+    { d: `${opts.scenePrompt}, cadru larg de deschidere, lumină aurie`, m: giraffe ? 'The cartoon giraffe walks toward the camera, friendly. Slow push-in. Flat 2D cartoon character, design unchanged.' : 'Slow cinematic push-in, golden light, gentle water movement.' },
     { d: `${opts.scenePrompt}, cadru mediu, alt unghi`, m: giraffe ? 'The cartoon giraffe gestures while talking, relaxed. Camera static. Design unchanged.' : 'Lateral dolly, soft parallax, ambient motion.' },
     { d: `${opts.scenePrompt}, cadru de final cu energie, apus`, m: giraffe ? 'The cartoon giraffe does a small happy dance. Slow pull-back. Design unchanged.' : 'Slow pull-back reveal at sunset.' },
   ];

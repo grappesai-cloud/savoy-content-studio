@@ -38,10 +38,20 @@ export async function compositeAnchor(opts: {
 
     // Giraffe at ~58% of frame height (1110px of 1920), bottom-center,
     // feet ~96px above the bottom edge so it sits on the floor line.
+    // Anti-sticker: a soft contact shadow grounds the character — the pose's
+    // alpha is flattened to black, squashed to an ellipse at the feet and
+    // blurred, then the character lands on top of it.
     await exec(FF, [
       '-y', '-i', bg, '-i', pose,
       '-filter_complex',
-      `[1]scale=-1:1110[g];[0][g]overlay=x=(W-w)/2:y=H-h-96`,
+      [
+        `[1]scale=-1:1110,format=rgba,split[g][gs]`,
+        // shadow: silhouette → black @60% → squash to 11% height → soft blur
+        // (geq mangles RGBA channels — colorchannelmixer keeps true black)
+        `[gs]colorchannelmixer=rr=0:gg=0:bb=0:aa=0.6,scale=iw*1.2:ih*0.11,boxblur=12:6[sh]`,
+        `[0][sh]overlay=x=(W-w)/2:y=H-h-40[bgsh]`,
+        `[bgsh][g]overlay=x=(W-w)/2:y=H-h-96`,
+      ].join(';'),
       '-frames:v', '1', '-q:v', '3',
       out,
     ], { timeout: 60_000 });

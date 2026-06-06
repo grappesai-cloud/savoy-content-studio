@@ -32,14 +32,15 @@ export function publicAssetBase(requestOrigin: string): string {
 // Sponsor-provided pose pack (distinct poses from the official asset set).
 // In giraffe mode the user can pick one; it rides along with the master image
 // as a second reference so the model copies the pose without drifting identity.
+// Curated 2026-06-06: only the 6 most on-model renders survive (soft shading,
+// real volume — kills the sticker look). Flat poses wave/sit/icecream/back dropped.
 export const GIRAFFE_POSES = [
-  { id: 'wave',     label: 'Salută',       file: '/studio/poses/wave.png' },
-  { id: 'sit',      label: 'Stă turcește', file: '/studio/poses/sit.png' },
-  { id: 'walk',     label: 'Se plimbă',    file: '/studio/poses/walk.png' },
-  { id: 'dance',    label: 'Dansează',     file: '/studio/poses/dance.png' },
-  { id: 'selfie',   label: 'Selfie',       file: '/studio/poses/selfie.png' },
-  { id: 'icecream', label: 'Cu înghețată', file: '/studio/poses/icecream.png' },
-  { id: 'back',     label: 'Din spate',    file: '/studio/poses/back.png' },
+  { id: 'walk',     label: 'Se plimbă',           file: '/studio/poses/walk.png' },
+  { id: 'walk-2',   label: 'Se plimbă (pas vioi)', file: '/studio/poses/walk-2.png' },
+  { id: 'dance',    label: 'Dansează',            file: '/studio/poses/dance.png' },
+  { id: 'dance-2',  label: 'Dansează (energic)',  file: '/studio/poses/dance-2.png' },
+  { id: 'selfie',   label: 'Selfie',              file: '/studio/poses/selfie.png' },
+  { id: 'selfie-2', label: 'Selfie (la cameră)',  file: '/studio/poses/selfie-2.png' },
 ] as const;
 export type GiraffePoseId = (typeof GIRAFFE_POSES)[number]['id'];
 

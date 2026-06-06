@@ -127,6 +127,22 @@ export async function submitImage(opts: {
   return { jobId, provider: 'higgsfield' };
 }
 
+// ── Anchor integration (FLUX Kontext, path verified live) ────────────────────
+// Takes the deterministic composite and re-lights it: ambient light on the
+// character, realistic contact shadow, subtle reflection — kills the sticker
+// look while Kontext preserves the design (that's its specialty). 9:16 honored
+// via aspect_ratio (A/B verified; without it the model returns landscape).
+
+export async function submitIntegrate(imageUrl: string): Promise<{ jobId: string; provider: string }> {
+  const jobId = await hfSubmit('flux-kontext', {
+    prompt: 'Integrate the cartoon giraffe character naturally into the real photo: match the ambient lighting of the location on the character, add a soft realistic contact shadow on the floor under its hooves, subtle floor reflection. KEEP the character design EXACTLY unchanged: same colors, same proportions, same straw hat, same bow tie, same cartoon outline style. Do not redesign the character. Do not change the background. Keep the full vertical 9:16 framing of the original image.',
+    image_url: imageUrl,
+    input_image: { type: 'image_url', image_url: imageUrl },
+    aspect_ratio: '9:16',
+  });
+  return { jobId, provider: 'higgsfield' };
+}
+
 export async function pollImage(provider: string, jobId: string): Promise<JobStatus> {
   if (provider === 'mock') return mockPoll(jobId);
   return hfPoll(jobId, 'image');
@@ -216,7 +232,7 @@ export async function submitVideo(opts: {
   const jobId = await hfSubmit(VIDEO_MODEL, {
     image_url: opts.imageUrl,
     ...(opts.endImageUrl ? { end_image_url: opts.endImageUrl } : {}),
-    prompt: `${opts.motionPrompt} The cartoon character keeps EXACTLY this design, flat 2D cartoon style, no redesign. The giraffe has black HOOVES, never fingers, never hands, never gloves. The giraffe has exactly TWO arms and TWO legs — never extra limbs, never duplicated body parts.`,
+    prompt: `${opts.motionPrompt} The cartoon character keeps EXACTLY this design, no redesign. It stays naturally integrated in the real scene: scene lighting on the character, soft contact shadow under its hooves following its movement. The giraffe has black HOOVES, never fingers, never hands, never gloves. The giraffe has exactly TWO arms and TWO legs — never extra limbs, never duplicated body parts.`,
     // Kling honors negative_prompt on this platform; unknown fields are
     // silently ignored, so this is safe even if the model path changes.
     negative_prompt: `${opts.talking ? 'closed mouth, static mouth, waving, big gestures, ' : ''}extra limbs, extra arms, third arm, duplicated limbs, deformed hands, fingers, gloves, mutated anatomy, redesigned character`,
