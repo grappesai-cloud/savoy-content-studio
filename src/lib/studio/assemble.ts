@@ -17,9 +17,22 @@ import { e } from '../env';
 const exec = promisify(execFile);
 const FF = ffmpegPath as unknown as string;
 
+// ffmpeg-static ships no ffprobe; `ffmpeg -i` exits non-zero but prints
+// "Duration: 00:00:05.04" on stderr — parse it from the thrown error.
+async function clipDuration(path: string): Promise<number> {
+  try {
+    await exec(FF, ['-i', path], { timeout: 30_000 });
+  } catch (err: any) {
+    const m = String(err?.stderr ?? '').match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/);
+    if (m) return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+  }
+  throw new Error(`Could not read duration of ${path}`);
+}
+
 export async function assembleReel(opts: {
   clipUrls: string[];       // absolute URLs, in scene order
-  audioUrl?: string | null; // full voice track (giraffe mode)
+  audioUrl?: string | null; // legacy: ONE full read laid over the whole cut
+  sceneAudioUrls?: (string | null)[]; // per-scene lines — each aligned to its clip's start
   reelId: string;
 }): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'savoy-'));
@@ -46,10 +59,44 @@ export async function assembleReel(opts: {
         '-c:a', 'aac', cut], { timeout: 300_000 });
     }
 
-    // 3) Voice over the cut (replaces clip audio; lip-synced clips carry their
-    //    own track in real mode — there this becomes a per-scene mix, TODO(kickoff))
+    // 3a) Per-scene voice: each line padded with silence to EXACTLY its clip's
+    //     duration, then concatenated — every replica starts the moment its
+    //     scene starts. This is what makes the talking direction read as
+    //     actual speech (a single full read drifts across scene cuts).
     let out = cut;
-    if (opts.audioUrl) {
+    const sceneAudio = opts.sceneAudioUrls ?? [];
+    if (sceneAudio.some(Boolean)) {
+      const segs: string[] = [];
+      for (let i = 0; i < clips.length; i++) {
+        const dur = await clipDuration(clips[i]);
+        const seg = join(dir, `aseg${i}.m4a`);
+        const lineUrl = sceneAudio[i];
+        if (lineUrl) {
+          const ares = await fetch(lineUrl);
+          if (!ares.ok) throw new Error(`Scene ${i + 1} audio fetch failed: ${ares.status}`);
+          const line = join(dir, `line${i}.mp3`);
+          await writeFile(line, Buffer.from(await ares.arrayBuffer()));
+          // pad to clip length; a line longer than its clip is trimmed
+          await exec(FF, ['-y', '-i', line, '-af', 'apad', '-t', dur.toFixed(3),
+            '-ar', '44100', '-ac', '2', '-c:a', 'aac', seg], { timeout: 60_000 });
+        } else {
+          await exec(FF, ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
+            '-t', dur.toFixed(3), '-c:a', 'aac', seg], { timeout: 60_000 });
+        }
+        segs.push(seg);
+      }
+      const track = join(dir, 'voice-track.m4a');
+      await exec(FF, [
+        '-y', ...segs.flatMap(s => ['-i', s]),
+        '-filter_complex', `${segs.map((_, i) => `[${i}:a]`).join('')}concat=n=${segs.length}:v=0:a=1[a]`,
+        '-map', '[a]', '-c:a', 'aac', track,
+      ], { timeout: 120_000 });
+      const mixed = join(dir, 'final.mp4');
+      await exec(FF, ['-y', '-i', cut, '-i', track,
+        '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac',
+        '-shortest', '-movflags', '+faststart', mixed], { timeout: 120_000 });
+      out = mixed;
+    } else if (opts.audioUrl) {
       const ares = await fetch(opts.audioUrl);
       if (ares.ok) {
         const voice = join(dir, 'voice.mp3');

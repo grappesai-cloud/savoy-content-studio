@@ -22,7 +22,8 @@ async function runAssembly(
   try {
     finalUrl = await assembleReel({
       clipUrls: sb.scenes.map(s => abs(s.video.url!)),
-      audioUrl: reel.audio_url ? abs(reel.audio_url) : null,
+      audioUrl: reel.audio_url ? abs(reel.audio_url) : null, // legacy full read
+      sceneAudioUrls: sb.scenes.map(s => (s.audioUrl ? abs(s.audioUrl) : null)),
       reelId: reel.id,
     });
     msg = `Reel finalizat: ${sb.scenes.length} scene ancorate, ~${sb.scenes.length * 8}s`;

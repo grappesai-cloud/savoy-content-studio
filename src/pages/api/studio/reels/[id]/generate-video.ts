@@ -24,13 +24,20 @@ export const POST: APIRoute = async ({ locals, params }) => {
   const storyboard = reel.storyboard;
 
   try {
-    // Voice first (giraffe): one full read; assembly lays it over the final cut.
-    let audioUrl = reel.audio_url ?? undefined;
-    if (reel.mode === 'giraffe' && !audioUrl && reel.dialogue) {
-      await updateReel(reel.id, { status: 'audio_generating' },
-        { stage: 'audio', msg: 'Generare voce ElevenLabs (română)' });
-      audioUrl = await generateSpeech(reel.dialogue, reel.id);
-      await updateReel(reel.id, { audio_url: audioUrl }, { stage: 'audio', msg: 'Voce generată' });
+    // Voice first (giraffe): one TTS per scene line. Assembly aligns each
+    // line to the START of its own clip — a single full read drifts out of
+    // sync with the scenes it belongs to (verified on the talking test).
+    if (reel.mode === 'giraffe' && reel.dialogue) {
+      const missing = storyboard.scenes.filter(s => s.dialogue && !s.audioUrl);
+      if (missing.length > 0) {
+        await updateReel(reel.id, { status: 'audio_generating' },
+          { stage: 'audio', msg: 'Generare voce ElevenLabs (română), pe scene' });
+        for (const scene of missing) {
+          scene.audioUrl = await generateSpeech(scene.dialogue!, `${reel.id}/s${scene.n}`);
+        }
+        await setStoryboard(reel.id, storyboard);
+        await updateReel(reel.id, {}, { stage: 'audio', msg: `Voce generată: ${missing.length} replici` });
+      }
     }
 
     let submitted = 0;

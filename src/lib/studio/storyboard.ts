@@ -25,6 +25,7 @@ export interface StoryScene {
   pose: string | null;   // official pose id used as identity/pose reference
   backdrop: string | null; // real hotel photo id — giraffe gets composited into it
   dialogue: string | null; // giraffe mode: this scene's line
+  audioUrl?: string | null; // per-scene TTS of `dialogue` — aligned to this clip in assembly
   image: SceneJob;
   video: SceneJob;
 }
