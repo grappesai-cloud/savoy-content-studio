@@ -93,7 +93,7 @@ ${giraffe ? `REPLICA INTEGRALĂ: ${opts.dialogue}` : ''}
 
 FUNDALURI REALE DISPONIBILE (fotografii adevărate din hotel, personajul poate fi plasat în ele): receptie = recepția elegantă cu marmură verde, receptie-wide = lobby-ul larg, loc-de-joaca = locul de joacă gonflabil de pe plajă. Folosește-le când scena se potrivește (ex: bun venit → receptie, distracție copii → loc-de-joaca); null pentru fundal curat de brand.
 
-Reguli: scena 1 e hook-ul (cea mai spectaculoasă), scena 3 închide cu CTA vizual. Mișcările simple, o singură acțiune pe scenă.`,
+Reguli: scena 1 e hook-ul (cea mai spectaculoasă), scena 3 închide cu CTA vizual. O singură acțiune pe scenă, dar AMPLĂ și dinamică: personajul traversează cadrul, pășește spre cameră, dansează, se rotește — niciodată static. Camera mereu în mișcare lentă (tracking lateral, orbit, push-in/pull-back) și mereu la distanță: personajul întreg în cadru, fără close-up.`,
       }],
     }),
   });

@@ -18,16 +18,24 @@ const exec = promisify(execFile);
 const FF = ffmpegPath as unknown as string;
 
 // ffmpeg-static ships no ffprobe; `ffmpeg -i` exits non-zero but prints
-// "Duration: 00:00:05.04" on stderr — parse it from the thrown error.
-async function clipDuration(path: string): Promise<number> {
+// "Duration: 00:00:05.04" and "24 fps" on stderr — parse from the error.
+async function clipInfo(path: string): Promise<{ dur: number; fps: number }> {
   try {
     await exec(FF, ['-i', path], { timeout: 30_000 });
   } catch (err: any) {
-    const m = String(err?.stderr ?? '').match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/);
-    if (m) return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+    const s = String(err?.stderr ?? '');
+    const m = s.match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/);
+    const f = s.match(/(\d+(?:\.\d+)?) fps/);
+    if (m) {
+      return {
+        dur: Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]),
+        fps: f ? Number(f[1]) : 24,
+      };
+    }
   }
   throw new Error(`Could not read duration of ${path}`);
 }
+const clipDuration = async (path: string) => (await clipInfo(path)).dur;
 
 // drawtext is picky about special characters; typographic swaps beat escapes.
 function drawtextEsc(s: string): string {
@@ -59,14 +67,35 @@ export async function assembleReel(opts: {
 }): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'savoy-'));
   try {
-    // 1) Download every clip
+    // 1) Download every clip + dynamic-edit pass: alternating slow punch-zoom
+    //    (in on even scenes, out on odd) — the cut feels edited, not stitched.
+    //    The zoompan re-encode also normalizes fps/params so concat can copy.
     const clips: string[] = [];
     for (let i = 0; i < opts.clipUrls.length; i++) {
       const res = await fetch(opts.clipUrls[i]);
       if (!res.ok) throw new Error(`Clip ${i + 1} fetch failed: ${res.status}`);
+      const raw = join(dir, `raw${i}.mp4`);
+      await writeFile(raw, Buffer.from(await res.arrayBuffer()));
       const p = join(dir, `clip${i}.mp4`);
-      await writeFile(p, Buffer.from(await res.arrayBuffer()));
-      clips.push(p);
+      const { dur, fps } = await clipInfo(raw);
+      const frames = Math.max(1, Math.round(dur * fps));
+      const zoom = i % 2 === 0
+        ? `min(1+0.09*on/${frames},1.09)`          // slow push-in
+        : `max(1.09-0.09*on/${frames},1.0)`;       // slow pull-out
+      try {
+        await exec(FF, [
+          '-y', '-i', raw,
+          // zoompan fps MUST match the source — forcing a different rate
+          // re-times the clip and desyncs the per-scene voice (verified)
+          '-vf', `scale=1080:1920,zoompan=z='${zoom}':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=${fps}`,
+          '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-pix_fmt', 'yuv420p',
+          p,
+        ], { timeout: 180_000 });
+        clips.push(p);
+      } catch (err: any) {
+        console.error('[studio/assemble] zoom pass skipped for clip', i + 1, err?.message);
+        clips.push(raw);
+      }
     }
 
     // 2) Concat — stream copy, re-encode fallback if params mismatch
