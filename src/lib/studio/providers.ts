@@ -235,7 +235,7 @@ export async function submitVideo(opts: {
     prompt: `${opts.motionPrompt} The cartoon character keeps EXACTLY this design, no redesign. It stays naturally integrated in the real scene: scene lighting on the character, soft contact shadow under its hooves following its movement. The giraffe has black HOOVES, never fingers, never hands, never gloves. The giraffe has exactly TWO arms and TWO legs — never extra limbs, never duplicated body parts.`,
     // Kling honors negative_prompt on this platform; unknown fields are
     // silently ignored, so this is safe even if the model path changes.
-    negative_prompt: `${opts.talking ? 'closed mouth, static mouth, waving, big gestures, ' : ''}extra limbs, extra arms, third arm, duplicated limbs, deformed hands, fingers, gloves, mutated anatomy, redesigned character`,
+    negative_prompt: `${opts.talking ? 'closed mouth, static mouth, hidden mouth, muzzle pointing at the camera, frontal muzzle view, head turning away, waving, big gestures, ' : ''}extra limbs, extra arms, third arm, duplicated limbs, deformed hands, fingers, gloves, mutated anatomy, redesigned character`,
     duration: 5,
   });
   return { jobId, provider: 'higgsfield' };

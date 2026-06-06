@@ -53,7 +53,7 @@ export const POST: APIRoute = async ({ locals, params }) => {
         // (A/B-verified live on the reception anchor).
         const talking = reel.mode === 'giraffe' && scene.dialogue;
         const motionPrompt = talking
-          ? `The cartoon giraffe is SPEAKING to the camera from the very FIRST frame to the very LAST frame, continuously: mouth opening and closing the entire clip, like an enthusiastic TV host delivering lines non-stop. The talking never pauses. Secondary: ${scene.motion} Body and arms stay calm and steady.`
+          ? `The cartoon giraffe is SPEAKING to the camera from the very FIRST frame to the very LAST frame, continuously: mouth opening and closing the entire clip, like an enthusiastic TV host delivering lines non-stop. The talking never pauses. The head stays in THREE-QUARTER view toward the camera for the WHOLE clip — the mouth is clearly visible side-on at all times; the muzzle NEVER points straight into the lens and the head never turns away. Secondary: ${scene.motion} Body and arms stay calm and steady.`
           : scene.motion;
         const { jobId, provider } = await submitVideo({
           imageUrl: scene.image.url,
