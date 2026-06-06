@@ -7,9 +7,33 @@
 
 import type { APIRoute } from 'astro';
 import { json } from '../../../../lib/api-utils';
-import { getReel, updateReel, setStoryboard } from '../../../../lib/studio/db';
+import { getReel, updateReel, setStoryboard, claimAssembly } from '../../../../lib/studio/db';
 import { pollImage, pollVideo, archiveToBlob } from '../../../../lib/studio/providers';
 import { assembleReel } from '../../../../lib/studio/assemble';
+
+async function runAssembly(
+  reel: NonNullable<Awaited<ReturnType<typeof getReel>>>,
+  sb: NonNullable<NonNullable<Awaited<ReturnType<typeof getReel>>>['storyboard']>,
+  origin: string,
+) {
+  const abs = (u: string) => (u.startsWith('/') ? new URL(u, origin).toString() : u);
+  let finalUrl: string;
+  let msg: string;
+  try {
+    finalUrl = await assembleReel({
+      clipUrls: sb.scenes.map(s => abs(s.video.url!)),
+      audioUrl: reel.audio_url ? abs(reel.audio_url) : null,
+      reelId: reel.id,
+    });
+    msg = `Reel finalizat: ${sb.scenes.length} scene ancorate, ~${sb.scenes.length * 8}s`;
+  } catch (e: any) {
+    console.error('[studio/assemble] fallback to first clip:', e?.message);
+    finalUrl = sb.scenes[0].video.url!;
+    msg = 'Reel finalizat (asamblarea a eșuat, primul clip)';
+  }
+  await updateReel(reel.id, { status: 'complete', video_url: finalUrl, clearError: true },
+    { stage: 'video', msg });
+}
 
 export const GET: APIRoute = async ({ locals, params, url }) => {
   const user = locals.user;
@@ -76,27 +100,20 @@ export const GET: APIRoute = async ({ locals, params, url }) => {
           if (failed.length > 0) {
             await updateReel(reel.id, { status: 'video_failed', error_message: failed[0].video.error ?? 'Video eșuat' },
               { stage: 'video', msg: `Scenele ${failed.map(s => s.n).join(', ')} au eșuat` });
-          } else {
-            // All clips in → final cut
-            let finalUrl: string;
-            let msg: string;
-            try {
-              const abs = (u: string) => (u.startsWith('/') ? new URL(u, url.origin).toString() : u);
-              finalUrl = await assembleReel({
-                clipUrls: sb.scenes.map(s => abs(s.video.url!)),
-                audioUrl: reel.audio_url ? abs(reel.audio_url) : null,
-                reelId: reel.id,
-              });
-              msg = `Reel finalizat: ${sb.scenes.length} scene ancorate, ~${sb.scenes.length * 8}s`;
-            } catch (e: any) {
-              console.error('[studio/assemble] fallback to first clip:', e?.message);
-              finalUrl = sb.scenes[0].video.url!;
-              msg = 'Reel finalizat (asamblarea a eșuat, primul clip)';
-            }
-            await updateReel(reel.id, { status: 'complete', video_url: finalUrl, clearError: true },
-              { stage: 'video', msg });
+          } else if (await claimAssembly(reel.id)) {
+            // Exactly ONE invocation runs the final cut. Without the claim,
+            // every concurrent poll launched its own ffmpeg on the same Fluid
+            // instance → memory thrash → 800s runtime timeouts (prod logs).
+            await runAssembly(reel, sb, url.origin);
           }
         }
+      }
+    } else if (sb && reel.status === 'assembling') {
+      // Normally a no-op (the claimant is working); claimAssembly only
+      // succeeds here when the previous claim is >5 min old, i.e. the
+      // assembling function died — then this poll takes over.
+      if (await claimAssembly(reel.id)) {
+        await runAssembly(reel, sb, url.origin);
       }
     }
   } catch (e: any) {

@@ -21,7 +21,7 @@ function timeAgo(d: Date | string): string {
 const STATUS_LABEL: Record<string, string> = {
   draft: 'Ciornă', storyboard_ready: 'Storyboard',
   image_generating: 'Imagini…', image_ready: 'Așteaptă aprobare', image_failed: 'Eroare imagine',
-  approved: 'Aprobat', audio_generating: 'Voce…', video_generating: 'Video…',
+  approved: 'Aprobat', audio_generating: 'Voce…', video_generating: 'Video…', assembling: 'Montaj…',
   video_failed: 'Eroare video', complete: 'Gata',
 };
 ---
@@ -454,7 +454,9 @@ const STATUS_LABEL: Record<string, string> = {
       $('render-progress').hidden = false; $('done').hidden = true; $('fail').hidden = true;
       $('render-label').textContent = reel.status === 'audio_generating'
         ? 'Domnul Girafă intră în cabina de voce…'
-        : 'Animăm cele 3 scene ancorate…';
+        : reel.status === 'assembling'
+          ? 'Montaj final: lipim scenele și punem vocea…'
+          : 'Animăm cele 3 scene ancorate…';
       const dots = $('render-dots');
       dots.innerHTML = '';
       (reel.storyboard?.scenes ?? []).forEach((s: any) => {
@@ -495,7 +497,7 @@ const STATUS_LABEL: Record<string, string> = {
           case 'storyboard_ready': renderStoryboard(); return;
           case 'image_generating': renderImages(reel); break;
           case 'image_ready': renderImages(reel); return;
-          case 'approved': case 'audio_generating': case 'video_generating': renderProgress(reel); break;
+          case 'approved': case 'audio_generating': case 'video_generating': case 'assembling': renderProgress(reel); break;
           case 'complete': renderDone(reel); return;
           case 'image_failed': case 'video_failed': renderFail(reel); return;
           default: return;

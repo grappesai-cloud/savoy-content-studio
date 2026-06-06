@@ -10,7 +10,7 @@ export type StudioStatus =
   | 'image_generating' | 'image_ready' | 'image_failed'
   | 'approved'
   | 'audio_generating'
-  | 'video_generating' | 'video_failed'
+  | 'video_generating' | 'assembling' | 'video_failed'
   | 'complete';
 
 export interface StudioReel {
@@ -73,6 +73,21 @@ export async function listReels(userId: string): Promise<StudioReel[]> {
     SELECT * FROM studio_reels WHERE user_id = ${userId} ORDER BY created_at DESC LIMIT 50
   `;
   return rows.map(hydrate);
+}
+
+// Assembly lock: exactly ONE poll invocation may run the final cut. Atomic
+// claim via conditional UPDATE; losers keep polling. A claim older than
+// 5 minutes is considered dead (function crashed/timed out) and re-claimable.
+export async function claimAssembly(id: string): Promise<boolean> {
+  const sql = getPg();
+  const rows = await sql`
+    UPDATE studio_reels SET status = 'assembling', updated_at = now()
+    WHERE id = ${id}
+      AND (status = 'video_generating'
+           OR (status = 'assembling' AND updated_at < now() - interval '5 minutes'))
+    RETURNING id
+  `;
+  return rows.length > 0;
 }
 
 // Patch + append an audit event in one statement.
