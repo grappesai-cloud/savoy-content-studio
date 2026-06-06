@@ -179,6 +179,7 @@ const HEYGEN_BASE = e('HEYGEN_API_BASE') || 'https://api.heygen.com/v2';
 export async function submitVideo(opts: {
   imageUrl: string;     // anchor: the approved identity-locked still
   motionPrompt: string; // ONE character action + camera move for this 8s clip
+  talking?: boolean;    // dialogue scene → harden negatives against closed/static mouth
   audioUrl?: string;    // present → lip-sync path (per-scene line)
   endImageUrl?: string; // optional second anchor: Kling start+end frame interpolation
 }): Promise<{ jobId: string; provider: string }> {
@@ -218,7 +219,7 @@ export async function submitVideo(opts: {
     prompt: `${opts.motionPrompt} The cartoon character keeps EXACTLY this design, flat 2D cartoon style, no redesign. The giraffe has black HOOVES, never fingers, never hands, never gloves. The giraffe has exactly TWO arms and TWO legs — never extra limbs, never duplicated body parts.`,
     // Kling honors negative_prompt on this platform; unknown fields are
     // silently ignored, so this is safe even if the model path changes.
-    negative_prompt: 'extra limbs, extra arms, third arm, duplicated limbs, deformed hands, fingers, gloves, mutated anatomy, redesigned character',
+    negative_prompt: `${opts.talking ? 'closed mouth, static mouth, waving, big gestures, ' : ''}extra limbs, extra arms, third arm, duplicated limbs, deformed hands, fingers, gloves, mutated anatomy, redesigned character`,
     duration: 5,
   });
   return { jobId, provider: 'higgsfield' };

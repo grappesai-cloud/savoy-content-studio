@@ -47,14 +47,18 @@ export const POST: APIRoute = async ({ locals, params }) => {
       try {
         // Platform lip-sync models (speak/infinitalk) reject the cartoon
         // mascot (no detectable human face — verified live), so dialogue
-        // scenes get an explicit talking direction instead: the mouth visibly
-        // moves while the mixed-in voice plays. Reads as speech on camera.
-        const talking = reel.mode === 'giraffe' && scene.dialogue
-          ? ' The giraffe is TALKING to the camera the whole time: mouth clearly opening and closing as it speaks, lively friendly facial expression, small head gestures that match natural speech rhythm.'
-          : '';
+        // scenes are directed as TALKING-FIRST: speech is the primary action
+        // and the scene's own motion is demoted to secondary, otherwise Kling
+        // prioritizes the gesture and only opens the mouth near the end
+        // (A/B-verified live on the reception anchor).
+        const talking = reel.mode === 'giraffe' && scene.dialogue;
+        const motionPrompt = talking
+          ? `The cartoon giraffe is SPEAKING to the camera from the very FIRST frame to the very LAST frame, continuously: mouth opening and closing the entire clip, like an enthusiastic TV host delivering lines non-stop. The talking never pauses. Secondary: ${scene.motion} Body and arms stay calm and steady.`
+          : scene.motion;
         const { jobId, provider } = await submitVideo({
           imageUrl: scene.image.url,
-          motionPrompt: `${scene.motion}${talking}`,
+          motionPrompt,
+          talking: Boolean(talking),
         });
         scene.video = { status: 'generating', provider, jobId, url: null };
         submitted++;
