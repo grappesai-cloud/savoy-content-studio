@@ -38,11 +38,16 @@ export const POST: APIRoute = async ({ locals, params }) => {
       if (scene.video.status === 'ready') continue;
       if (scene.image.status !== 'ready' || !scene.image.url) continue;
       try {
+        // Platform lip-sync models (speak/infinitalk) reject the cartoon
+        // mascot (no detectable human face — verified live), so dialogue
+        // scenes get an explicit talking direction instead: the mouth visibly
+        // moves while the mixed-in voice plays. Reads as speech on camera.
+        const talking = reel.mode === 'giraffe' && scene.dialogue
+          ? ' The giraffe is TALKING to the camera the whole time: mouth clearly opening and closing as it speaks, lively friendly facial expression, small head gestures that match natural speech rhythm.'
+          : '';
         const { jobId, provider } = await submitVideo({
           imageUrl: scene.image.url,
-          motionPrompt: scene.motion,
-          // Per-scene lip-sync lands at kickoff (per-line TTS); until then the
-          // full voice read is mixed over the final cut in assembly.
+          motionPrompt: `${scene.motion}${talking}`,
         });
         scene.video = { status: 'generating', provider, jobId, url: null };
         submitted++;
