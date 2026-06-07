@@ -1,4 +1,5 @@
 ---
-// Savoy Content Studio: the public site lives at /savoy.
-return Astro.redirect('/savoy');
+// Savoy Content Studio: the landing page is the login itself.
+if (Astro.locals.user) return Astro.redirect('/dashboard');
+return Astro.redirect('/sign-in');
 ---
