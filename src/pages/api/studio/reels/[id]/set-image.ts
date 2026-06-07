@@ -6,6 +6,9 @@
 import type { APIRoute } from 'astro';
 import { json } from '../../../../../lib/api-utils';
 import { getReel, updateReel, setStoryboard } from '../../../../../lib/studio/db';
+import { compositeAnchor } from '../../../../../lib/studio/anchor';
+import { submitIntegrate } from '../../../../../lib/studio/providers';
+import { GIRAFFE_POSES, STUDIO_MOCK, publicAssetBase } from '../../../../../lib/studio/config';
 
 const ALLOWED = new Set(['storyboard_ready', 'image_generating', 'image_ready', 'image_failed']);
 
@@ -28,6 +31,44 @@ export const POST: APIRoute = async ({ locals, params, request }) => {
   if (parsed.protocol !== 'https:') return json({ error: 'Imaginea trebuie să fie un URL https.' }, 400);
 
   const storyboard = reel.storyboard;
+
+  // Simple flow: {background: true, imageUrl} — the upload is a BACKGROUND
+  // photo, not a finished anchor. The giraffe is composited into it at
+  // mid-ground (validated recipe), FLUX adds the contact shadow, and the one
+  // resulting anchor serves EVERY scene.
+  if (body?.background === true && reel.mode === 'giraffe') {
+    const pose = GIRAFFE_POSES.find(p => p.id === storyboard.scenes[0]?.pose) ?? GIRAFFE_POSES[0];
+    try {
+      const anchorUrl = await compositeAnchor({
+        backdropUrl: imageUrl,
+        poseAlphaUrl: new URL(`/studio/poses/alpha/${pose.id}.png`, publicAssetBase(new URL(request.url).origin)).toString(),
+        reelId: reel.id,
+        sceneN: 0,
+        midGround: true,
+      });
+      if (STUDIO_MOCK()) {
+        for (const s of storyboard.scenes) s.image = { status: 'ready', provider: 'composite', url: anchorUrl };
+      } else {
+        try {
+          const { jobId, provider } = await submitIntegrate(anchorUrl);
+          for (const s of storyboard.scenes) s.image = { status: 'generating', provider, jobId, url: null };
+        } catch {
+          // shadow pass failed → the raw composite is still a valid anchor
+          for (const s of storyboard.scenes) s.image = { status: 'ready', provider: 'composite', url: anchorUrl };
+        }
+      }
+      await setStoryboard(reel.id, storyboard);
+      const ready = storyboard.scenes[0].image.status === 'ready';
+      await updateReel(reel.id, ready
+        ? { status: 'image_ready', image_url: storyboard.scenes[0].image.url ?? null, clearError: true }
+        : { status: 'image_generating', clearError: true },
+        { stage: 'image', msg: 'Fundal încărcat de client — girafa compusă în cadru' });
+      return json({ ok: true, allReady: ready });
+    } catch (err: any) {
+      return json({ error: `Compunerea în fundal a eșuat: ${err?.message}` }, 502);
+    }
+  }
+
   const scene = storyboard.scenes.find(s => s.n === sceneN);
   if (!scene) return json({ error: 'Scena nu există.' }, 400);
 

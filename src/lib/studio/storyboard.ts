@@ -163,6 +163,33 @@ function templateStoryboard(opts: StoryboardOpts): Storyboard {
   };
 }
 
+// Simple flow: ONE continuous spoken text → scenes of ≤ ~90 chars each
+// (≈ 4.5s of Romanian TTS at the locked voice settings, fits a 5s Kling clip
+// with the 120ms lead + tail). Splits at sentence boundaries, packs greedily.
+export function rebuildScenesFromText(text: string, base?: Partial<StoryScene>): Storyboard {
+  const MAX = 90;
+  const sentences = text.match(/[^.!?]+[.!?]*/g)?.map(s => s.trim()).filter(Boolean) ?? [text.trim()];
+  const chunks: string[] = [];
+  let cur = '';
+  for (const s of sentences) {
+    if (cur && (cur.length + 1 + s.length) > MAX) { chunks.push(cur); cur = s; }
+    else cur = cur ? `${cur} ${s}` : s;
+  }
+  if (cur) chunks.push(cur);
+  return {
+    scenes: chunks.map((dialogue, i): StoryScene => ({
+      n: i + 1,
+      description: base?.description ?? 'Același cadru pe toată durata reelului',
+      motion: 'The cartoon giraffe speaks to the camera. Flat 2D cartoon character, design unchanged.',
+      pose: base?.pose ?? 'walk',
+      backdrop: base?.backdrop ?? null,
+      dialogue,
+      image: { status: 'pending' },
+      video: { status: 'pending' },
+    })),
+  };
+}
+
 function splitInThree(text: string): (string | null)[] {
   const sentences = text.match(/[^.!?]+[.!?]*/g)?.map(s => s.trim()).filter(Boolean) ?? [text];
   if (sentences.length <= 3) {

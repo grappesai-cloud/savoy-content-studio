@@ -122,8 +122,8 @@ const STATUS_LABEL: Record<string, string> = {
         <h2><span class="g-n">03</span>Textul</h2>
         <button class="g-btn g-btn-ghost g-btn-sm" id="btn-retext" type="button">↻ Alt text</button>
       </div>
-      <p class="g-note">Scris de AI din ideea ta, pe 3 scene. Corectează orice cuvânt direct în casete.</p>
-      <div class="g-scenes" id="text-grid"></div>
+      <p class="g-note">Tot ce spune caracterul în video, scris de AI din ideea ta. Corectează direct în casetă.</p>
+      <div class="g-scenes g-scenes-single" id="text-grid"></div>
       <button class="g-btn" id="btn-approve-text" type="button">✓ Clientul aprobă textul</button>
       <p class="g-error" id="text-error" hidden></p>
     </section>
@@ -131,9 +131,9 @@ const STATUS_LABEL: Record<string, string> = {
     <!-- 04 · Imaginile -->
     <section class="g-block" id="block-image" hidden>
       <h2><span class="g-n">04</span>Imaginile</h2>
-      <p class="g-note">Pentru fiecare scenă: o generează AI-ul din text, sau încarci tu imaginea. Nimic nu merge mai departe fără aprobarea ta.</p>
-      <div class="g-scenes" id="image-grid"></div>
-      <button class="g-btn" id="btn-gen-images" type="button">Generează imaginile rămase →</button>
+      <p class="g-note">O singură imagine pentru tot videoul: încarcă fundalul tău (girafa intră singură în cadru) sau lasă AI-ul să genereze unul. Nimic nu merge mai departe fără aprobarea ta.</p>
+      <div class="g-scenes g-scenes-single" id="image-grid"></div>
+      <button class="g-btn" id="btn-gen-images" type="button">Generează imaginea →</button>
       <div class="g-gate" id="gate" hidden>
         <p>Verifică fiecare cadru. Videoul costă bani și pornește doar după OK-ul tău.</p>
         <button class="g-btn" id="btn-approve" type="button">Aprobă tot → generează filmul</button>
@@ -247,6 +247,9 @@ const STATUS_LABEL: Record<string, string> = {
 
     .g-scenes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
     @media (max-width: 720px) { .g-scenes { grid-template-columns: 1fr; } }
+    /* simple flow: one text box / one image for the whole reel */
+    .g-scenes-single { grid-template-columns: 1fr; max-width: 460px; }
+    .g-scenes-single img { max-height: 560px; object-fit: contain; }
     .g-scene { background: var(--paper); border: 1px solid var(--line); border-radius: 4px; padding: 16px; display: flex; flex-direction: column; gap: 9px; animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) both; }
     .g-scene:nth-child(2) { animation-delay: 0.07s; } .g-scene:nth-child(3) { animation-delay: 0.14s; }
     @keyframes rise { from { opacity: 0; transform: translateY(18px); } }
@@ -456,24 +459,21 @@ const STATUS_LABEL: Record<string, string> = {
     });
 
     // ── 03 · the script + client OK ──────────────────────────────────────────
+    // Simple flow: ONE box with everything the character says. The server
+    // re-splits it into ≤5s scenes on save — the client never sees scenes.
     function renderText() {
       setRail('text', ['char', 'idea']);
       showOnly(['block-text']);
       const grid = $('text-grid');
       grid.innerHTML = '';
-      board.scenes.forEach((s: any) => {
-        const card = document.createElement('article');
-        card.className = 'g-scene';
-        card.innerHTML = `
-          <span class="g-scene-n">SCENA ${s.n}</span>
-          <span class="g-scene-label">Ce spune</span>
-          <textarea rows="3" data-f="dialogue" data-n="${s.n}"></textarea>
-          <span class="g-scene-label">Cadrul</span>
-          <textarea rows="3" data-f="description" data-n="${s.n}"></textarea>`;
-        grid.appendChild(card);
-        (card.querySelector('[data-f="dialogue"]') as HTMLTextAreaElement).value = s.dialogue ?? '';
-        (card.querySelector('[data-f="description"]') as HTMLTextAreaElement).value = s.description;
-      });
+      const card = document.createElement('article');
+      card.className = 'g-scene';
+      card.innerHTML = `
+        <span class="g-scene-label">Ce spune caracterul</span>
+        <textarea rows="7" id="simple-text"></textarea>`;
+      grid.appendChild(card);
+      (card.querySelector('#simple-text') as HTMLTextAreaElement).value =
+        board.scenes.map((s: any) => s.dialogue).filter(Boolean).join(' ');
     }
 
     $('btn-retext').addEventListener('click', async () => {
@@ -486,13 +486,8 @@ const STATUS_LABEL: Record<string, string> = {
     });
 
     async function saveTextEdits() {
-      const map: Record<string, any> = {};
-      document.querySelectorAll<HTMLTextAreaElement>('#text-grid [data-n]').forEach(el => {
-        const n = Number(el.dataset.n);
-        map[n] = map[n] ?? { n };
-        map[n][el.dataset.f!] = el.value;
-      });
-      board = (await api(`/api/studio/reels/${reelId}/storyboard`, { method: 'PATCH', body: JSON.stringify({ scenes: Object.values(map) }) })).storyboard;
+      const text = (document.getElementById('simple-text') as HTMLTextAreaElement).value.trim();
+      board = (await api(`/api/studio/reels/${reelId}/storyboard`, { method: 'PATCH', body: JSON.stringify({ simpleText: text }) })).storyboard;
     }
 
     $('btn-approve-text').addEventListener('click', async () => {
@@ -506,57 +501,56 @@ const STATUS_LABEL: Record<string, string> = {
       finally { btn.disabled = false; }
     });
 
-    // ── 04 · images: generate OR upload, then the gate ──────────────────────
+    // ── 04 · ONE image for the whole reel: generate OR upload a background ──
+    // The single anchor (giraffe mid-ground + shadow) serves every ≤5s scene;
+    // scene 1 carries the state, the rest mirror it server-side.
     function renderImageChoice() {
       setRail('image', ['char', 'idea', 'text']);
       showOnly(['block-image']);
-      $('btn-gen-images').hidden = false;
       $('gate').hidden = true;
       const grid = $('image-grid');
       grid.innerHTML = '';
-      board.scenes.forEach((s: any) => {
-        const card = document.createElement('article');
-        card.className = 'g-scene';
-        const st = s.image?.status ?? 'pending';
-        card.innerHTML = `
-          <span class="g-scene-n">SCENA ${s.n}</span>
-          ${st === 'ready' ? `<img src="${s.image.url}" alt="Scena ${s.n}" />`
-            : st === 'generating' ? '<div class="g-shimmer"></div><span class="g-scene-status">Se generează…</span>'
-            : st === 'failed' ? `<div class="g-shimmer" style="animation:none"></div><span class="g-scene-status err">${s.image.error ?? 'Eroare'}</span>`
-            : '<div class="g-shimmer" style="animation:none"></div><span class="g-scene-status">Va fi generată din text, sau încarcă tu una.</span>'}
-          <div class="g-row">
-            ${['ready', 'failed'].includes(st) ? `<button class="g-mini js-regen" data-n="${s.n}" type="button">↻ Regenerează</button>` : ''}
-            ${st !== 'generating' ? `<button class="g-mini js-upl-btn" data-n="${s.n}" type="button">Încarcă imagine</button>` : ''}
-          </div>
-          <input class="g-upl" data-n="${s.n}" type="file" accept="image/png,image/jpeg,image/webp" />`;
-        grid.appendChild(card);
-      });
-      grid.querySelectorAll<HTMLButtonElement>('.js-regen').forEach(b => b.onclick = async () => {
-        b.disabled = true;
-        await api(`/api/studio/reels/${reelId}/generate-image`, { method: 'POST', body: JSON.stringify({ scene: Number(b.dataset.n) }) }).catch(() => {});
+      const s = board.scenes[0];
+      const st = s?.image?.status ?? 'pending';
+      const card = document.createElement('article');
+      card.className = 'g-scene';
+      card.innerHTML = `
+        ${st === 'ready' ? `<img src="${s.image.url}" alt="Imaginea reelului" />`
+          : st === 'generating' ? '<div class="g-shimmer"></div><span class="g-scene-status">Se generează…</span>'
+          : st === 'failed' ? `<div class="g-shimmer" style="animation:none"></div><span class="g-scene-status err">${s.image.error ?? 'Eroare'}</span>`
+          : '<div class="g-shimmer" style="animation:none"></div><span class="g-scene-status">Generează una din idee, sau încarcă fundalul tău.</span>'}
+        <div class="g-row">
+          ${st === 'ready' ? `<button class="g-mini js-regen" type="button">↻ Regenerează</button>` : ''}
+          ${st !== 'generating' ? `<button class="g-mini js-upl-btn" type="button">Încarcă fundalul tău</button>` : ''}
+        </div>
+        <input class="g-upl" type="file" accept="image/png,image/jpeg,image/webp" />`;
+      grid.appendChild(card);
+      const regen = grid.querySelector<HTMLButtonElement>('.js-regen');
+      if (regen) regen.onclick = async () => {
+        regen.disabled = true;
+        await api(`/api/studio/reels/${reelId}/generate-image`, { method: 'POST', body: JSON.stringify({ single: true }) }).catch(() => {});
         poll();
-      });
-      grid.querySelectorAll<HTMLButtonElement>('.js-upl-btn').forEach(b => b.onclick = () => {
-        grid.querySelector<HTMLInputElement>(`.g-upl[data-n="${b.dataset.n}"]`)!.click();
-      });
-      grid.querySelectorAll<HTMLInputElement>('.g-upl').forEach(inp => inp.onchange = async () => {
+      };
+      const uplBtn = grid.querySelector<HTMLButtonElement>('.js-upl-btn');
+      if (uplBtn) uplBtn.onclick = () => grid.querySelector<HTMLInputElement>('.g-upl')!.click();
+      const inp = grid.querySelector<HTMLInputElement>('.g-upl')!;
+      inp.onchange = async () => {
         const file = inp.files?.[0];
         if (!file) return;
         const err = $('image-error');
         err.hidden = true;
         try {
-          const blob = await upload(`studio/anchors/${file.name}`, file, {
+          const blob = await upload(`studio/backgrounds/${file.name}`, file, {
             access: 'public', handleUploadUrl: '/api/studio/upload',
           });
           await api(`/api/studio/reels/${reelId}/set-image`, {
-            method: 'POST', body: JSON.stringify({ scene: Number(inp.dataset.n), imageUrl: blob.url }),
+            method: 'POST', body: JSON.stringify({ background: true, imageUrl: blob.url }),
           });
           poll();
         } catch (e: any) { err.textContent = e.message; err.hidden = false; }
-      });
-      const allReady = board.scenes.every((s: any) => s.image?.status === 'ready');
-      const anyMissing = board.scenes.some((s: any) => ['pending', 'failed'].includes(s.image?.status ?? 'pending'));
-      $('btn-gen-images').hidden = !anyMissing;
+      };
+      const allReady = board.scenes.every((sc: any) => sc.image?.status === 'ready');
+      $('btn-gen-images').hidden = !['pending', 'failed'].includes(st);
       $('gate').hidden = !allReady;
     }
 
@@ -564,7 +558,7 @@ const STATUS_LABEL: Record<string, string> = {
       const btn = $('btn-gen-images') as HTMLButtonElement, err = $('image-error');
       err.hidden = true; btn.disabled = true;
       try {
-        await api(`/api/studio/reels/${reelId}/generate-image`, { method: 'POST', body: '{}' });
+        await api(`/api/studio/reels/${reelId}/generate-image`, { method: 'POST', body: JSON.stringify({ single: true }) });
         poll();
       } catch (e: any) { err.textContent = e.message; err.hidden = false; }
       finally { btn.disabled = false; }

@@ -4,7 +4,7 @@
 import type { APIRoute } from 'astro';
 import { json } from '../../../../../lib/api-utils';
 import { getReel, updateReel, setStoryboard } from '../../../../../lib/studio/db';
-import { generateStoryboard } from '../../../../../lib/studio/storyboard';
+import { generateStoryboard, rebuildScenesFromText } from '../../../../../lib/studio/storyboard';
 import { getCharacter } from '../../../../../lib/studio/characters';
 import { GIRAFFE_POSES, BACKDROPS } from '../../../../../lib/studio/config';
 
@@ -60,6 +60,25 @@ export const PATCH: APIRoute = async ({ locals, params, request }) => {
   }
 
   const body = await request.json().catch(() => null);
+
+  // Simple flow: the dashboard sends ONE continuous spoken text — the server
+  // re-splits it into ≤5s scenes (the validated chunking) so the client never
+  // thinks in scenes. Carries over scene 1's framing (pose/backdrop/description).
+  if (typeof body?.simpleText === 'string') {
+    const text = body.simpleText.trim();
+    if (!text) return json({ error: 'Textul lipsește.' }, 400);
+    const first = reel.storyboard.scenes[0];
+    const storyboard = rebuildScenesFromText(text, {
+      description: first?.description,
+      pose: first?.pose ?? undefined,
+      backdrop: first?.backdrop ?? undefined,
+    });
+    await setStoryboard(reel.id, storyboard);
+    await updateReel(reel.id, { dialogue: text },
+      { stage: 'storyboard', msg: `Text împărțit în ${storyboard.scenes.length} scene de ≤5s` });
+    return json({ storyboard });
+  }
+
   const edits: any[] = Array.isArray(body?.scenes) ? body.scenes : [];
   const poseIds = new Set(GIRAFFE_POSES.map(p => p.id));
 

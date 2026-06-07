@@ -6,7 +6,7 @@ import type { APIRoute } from 'astro';
 import { json } from '../../../../../lib/api-utils';
 import { getReel, updateReel, setStoryboard } from '../../../../../lib/studio/db';
 import { submitImage, submitIntegrate, submitCharacterAnchor } from '../../../../../lib/studio/providers';
-import { GIRAFFE_MASTER_IMAGE, GIRAFFE_POSES, BACKDROPS, STUDIO_MOCK, publicAssetBase } from '../../../../../lib/studio/config';
+import { GIRAFFE_MASTER_IMAGE, GIRAFFE_IDENTITY_LOCK, GIRAFFE_POSES, BACKDROPS, STUDIO_MOCK, publicAssetBase } from '../../../../../lib/studio/config';
 import { compositeAnchor } from '../../../../../lib/studio/anchor';
 import { getCharacter } from '../../../../../lib/studio/characters';
 import { e } from '../../../../../lib/env';
@@ -26,6 +26,32 @@ export const POST: APIRoute = async ({ locals, params, request, url }) => {
 
   const body = await request.json().catch(() => ({}));
   const onlyScene: number | null = typeof body?.scene === 'number' ? body.scene : null;
+
+  // Simple flow: ONE generated image for the whole reel. FLUX Kontext gets the
+  // transparent pose alpha and paints the background around it from the idea
+  // (validated live: identity survives, scene is invented). The single job is
+  // assigned to EVERY scene — the poll route resolves each to the same still.
+  if (body?.single === true && reel.mode === 'giraffe' && !STUDIO_MOCK()) {
+    const storyboard1 = reel.storyboard;
+    const pose1 = GIRAFFE_POSES.find(p => p.id === storyboard1.scenes[0]?.pose) ?? GIRAFFE_POSES[0];
+    const poseAlpha = new URL(`/studio/poses/alpha/${pose1.id}.png`, publicAssetBase(url.origin)).toString();
+    try {
+      const { jobId, provider } = await submitCharacterAnchor({
+        masterImageUrl: poseAlpha,
+        scenePrompt: `${reel.scene_prompt}. The giraffe stands in the MIDDLE DISTANCE, small in the frame (about one third of the frame height), on the ground, with a soft contact shadow under its hooves. It must stay a FLAT 2D hand-drawn cartoon with black ink outlines — do not make it 3D.`,
+        identityLock: GIRAFFE_IDENTITY_LOCK,
+      });
+      for (const scene of storyboard1.scenes) {
+        scene.image = { status: 'generating', provider, jobId, url: null };
+      }
+      await setStoryboard(reel.id, storyboard1);
+      await updateReel(reel.id, { status: 'image_generating', clearError: true },
+        { stage: 'image', msg: 'Imagine unică generată pentru tot reelul' });
+      return json({ submitted: storyboard1.scenes.length, single: true });
+    } catch (err: any) {
+      return json({ error: `Generarea imaginii a eșuat: ${err?.message}` }, 502);
+    }
+  }
 
   const withGiraffe = reel.mode === 'giraffe';
   const character = reel.character_id ? await getCharacter(reel.character_id, user.id) : null;
