@@ -18,7 +18,11 @@ export const POST: APIRoute = async ({ locals, request }) => {
       request,
       token: e('BLOB_READ_WRITE_TOKEN'),
       onBeforeGenerateToken: async (pathname: string) => ({
-        allowedContentTypes: ['video/mp4', 'video/quicktime', 'video/webm'],
+        allowedContentTypes: [
+          'video/mp4', 'video/quicktime', 'video/webm',
+          // Dashboard: client-provided anchor stills + custom character masters
+          'image/jpeg', 'image/png', 'image/webp',
+        ],
         maximumSizeInBytes: 200 * 1024 * 1024,
         tokenPayload: JSON.stringify({ userId: user.id, pathname }),
         addRandomSuffix: true,

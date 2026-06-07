@@ -103,6 +103,7 @@ export async function submitImage(opts: {
   scenePrompt: string;
   withGiraffe: boolean;
   refImageUrls?: string[]; // absolute URLs: [0] = girafa.jpg master, [1] = optional pose reference
+  identityLock?: string;   // custom character lock; default = the giraffe's
 }): Promise<{ jobId: string; provider: string }> {
   if (STUDIO_MOCK()) {
     return { jobId: mockSubmit('image', 6_000), provider: 'mock' };
@@ -112,7 +113,7 @@ export async function submitImage(opts: {
     ? '\nThe second reference image shows the EXACT pose to use. Copy the pose from it; copy the identity (colors, hat, bow tie, proportions) from the first reference image.'
     : '';
   const prompt = opts.withGiraffe
-    ? `${opts.scenePrompt}\n\n${GIRAFFE_IDENTITY_LOCK}${poseHint}`
+    ? `${opts.scenePrompt}\n\n${opts.identityLock ?? GIRAFFE_IDENTITY_LOCK}${poseHint}`
     : `${opts.scenePrompt}\n\nStyle: bright, premium hotel marketing photo-illustration, ${REEL_FORMAT.aspect} vertical composition.`;
 
   const jobId = await hfSubmit(opts.withGiraffe ? IMAGE_MODEL_GIRAFFE : IMAGE_MODEL_SCENE, {
@@ -138,6 +139,29 @@ export async function submitIntegrate(imageUrl: string): Promise<{ jobId: string
     prompt: 'Integrate the cartoon giraffe character naturally into the real photo: match the ambient lighting of the location on the character, add a soft realistic contact shadow on the floor under its hooves, subtle floor reflection. KEEP the character design EXACTLY unchanged: same colors, same proportions, same straw hat, same bow tie, same cartoon outline style. Do not redesign the character. Do not change the background. Keep the full vertical 9:16 framing of the original image.',
     image_url: imageUrl,
     input_image: { type: 'image_url', image_url: imageUrl },
+    aspect_ratio: '9:16',
+  });
+  return { jobId, provider: 'higgsfield' };
+}
+
+// ── Custom-character anchors (FLUX Kontext from the master image) ────────────
+// Custom mascots have no official pose pack, so the anchor is generated: the
+// master image goes in as the edit input and Kontext places the character into
+// the scene while preserving the design (its specialty — same path that
+// re-lights the giraffe composites, verified live).
+
+export async function submitCharacterAnchor(opts: {
+  masterImageUrl: string;
+  scenePrompt: string;
+  identityLock: string;
+}): Promise<{ jobId: string; provider: string }> {
+  if (STUDIO_MOCK()) {
+    return { jobId: mockSubmit('image', 6_000), provider: 'mock' };
+  }
+  const jobId = await hfSubmit('flux-kontext', {
+    prompt: `Place this exact character into a new scene: ${opts.scenePrompt}\nFull character visible in frame, wide vertical 9:16 composition, scene lighting matching the environment, soft contact shadow under the character.\n\n${opts.identityLock}`,
+    image_url: opts.masterImageUrl,
+    input_image: { type: 'image_url', image_url: opts.masterImageUrl },
     aspect_ratio: '9:16',
   });
   return { jobId, provider: 'higgsfield' };
@@ -198,6 +222,7 @@ export async function submitVideo(opts: {
   talking?: boolean;    // dialogue scene → harden negatives against closed/static mouth
   audioUrl?: string;    // present → lip-sync path (per-scene line)
   endImageUrl?: string; // optional second anchor: Kling start+end frame interpolation
+  characterName?: string; // custom mascot → drop the giraffe-specific anatomy rules
 }): Promise<{ jobId: string; provider: string }> {
   if (STUDIO_MOCK()) {
     return { jobId: mockSubmit('video', 9_000), provider: 'mock' };
@@ -229,10 +254,13 @@ export async function submitVideo(opts: {
   // Motion: image-to-video anchored on the approved still, via Kling on the
   // Higgsfield platform (path verified live). With endImageUrl the model
   // interpolates between two identity-locked anchors — near-zero drift.
+  const anatomy = opts.characterName
+    ? `The character "${opts.characterName}" has exactly TWO arms and TWO legs — never extra limbs, never duplicated body parts.`
+    : `The giraffe has black HOOVES, never fingers, never hands, never gloves. The giraffe has exactly TWO arms and TWO legs — never extra limbs, never duplicated body parts.`;
   const jobId = await hfSubmit(VIDEO_MODEL, {
     image_url: opts.imageUrl,
     ...(opts.endImageUrl ? { end_image_url: opts.endImageUrl } : {}),
-    prompt: `${opts.motionPrompt} The cartoon character keeps EXACTLY this design, no redesign. It stays naturally integrated in the real scene: scene lighting on the character, soft contact shadow under its hooves following its movement. The giraffe has black HOOVES, never fingers, never hands, never gloves. The giraffe has exactly TWO arms and TWO legs — never extra limbs, never duplicated body parts.`,
+    prompt: `${opts.motionPrompt} The cartoon character keeps EXACTLY this design, no redesign. It stays naturally integrated in the scene: scene lighting on the character, soft contact shadow under it following its movement. ${anatomy}`,
     // Kling honors negative_prompt on this platform; unknown fields are
     // silently ignored, so this is safe even if the model path changes.
     negative_prompt: `${opts.talking ? 'close-up, extreme close-up, face filling the frame, closed mouth, static mouth, hidden mouth, muzzle pointing at the camera, frontal muzzle view, head turning away, waving, big gestures, ' : ''}extra limbs, extra arms, third arm, duplicated limbs, deformed hands, fingers, gloves, mutated anatomy, redesigned character`,

@@ -41,11 +41,14 @@ const CLAUDE_MODEL = 'claude-sonnet-4-6';
 const POSE_IDS = GIRAFFE_POSES.map(p => p.id);
 const BACKDROP_IDS = BACKDROPS.map(b => b.id);
 
-export async function generateStoryboard(opts: {
+export interface StoryboardOpts {
   mode: 'scene' | 'giraffe';
   scenePrompt: string;
-  dialogue: string | null;
-}): Promise<Storyboard> {
+  dialogue: string | null;       // null in giraffe mode → Claude WRITES the script
+  characterName?: string | null; // custom character name; null/undefined = Domnul Girafă
+}
+
+export async function generateStoryboard(opts: StoryboardOpts): Promise<Storyboard> {
   const key = e('ANTHROPIC_API_KEY');
   if (key) {
     try { return await claudeStoryboard(key, opts); }
@@ -54,10 +57,12 @@ export async function generateStoryboard(opts: {
   return templateStoryboard(opts);
 }
 
-async function claudeStoryboard(key: string, opts: {
-  mode: 'scene' | 'giraffe'; scenePrompt: string; dialogue: string | null;
-}): Promise<Storyboard> {
+async function claudeStoryboard(key: string, opts: StoryboardOpts): Promise<Storyboard> {
   const giraffe = opts.mode === 'giraffe';
+  const custom = Boolean(opts.characterName);          // custom mascot: no pose pack, no Savoy backdrops
+  const charName = opts.characterName ?? 'Domnul Girafă';
+  const poseEnum = giraffe && !custom ? POSE_IDS : ['none'];
+  const backdropEnum = giraffe && !custom ? [...BACKDROP_IDS, null] : [null];
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
@@ -80,9 +85,13 @@ async function claudeStoryboard(key: string, opts: {
                 properties: {
                   description: { type: 'string', description: 'The STILL image: setting, framing, light. Romanian. 9:16 vertical. Do NOT describe the character design.' },
                   motion: { type: 'string', description: 'What moves in this 8s clip: ONE simple character action + subtle camera move. English, for a video model.' },
-                  pose: { type: 'string', enum: giraffe ? POSE_IDS : ['none'], description: 'Closest official pose for this scene' },
-                  backdrop: { type: ['string', 'null'], enum: giraffe ? [...BACKDROP_IDS, null] : [null], description: 'Real hotel photo to place the character into, if one fits the scene; null = clean brand background' },
-                  dialogue: { type: ['string', 'null'], description: giraffe ? 'This scene\'s slice of the dialogue, verbatim words from the original, split naturally.' : 'null' },
+                  pose: { type: 'string', enum: poseEnum, description: 'Closest official pose for this scene' },
+                  backdrop: { type: ['string', 'null'], enum: backdropEnum, description: 'Real hotel photo to place the character into, if one fits the scene; null = clean brand background' },
+                  dialogue: { type: ['string', 'null'], description: giraffe
+                    ? (opts.dialogue
+                        ? 'This scene\'s slice of the dialogue, verbatim words from the original, split naturally.'
+                        : 'This scene\'s line, written by you in Romanian: short, warm, spoken-word, 1-2 sentences in the character\'s voice.')
+                    : 'null' },
                 },
               },
             },
@@ -91,13 +100,17 @@ async function claudeStoryboard(key: string, opts: {
       }],
       messages: [{
         role: 'user',
-        content: `Ești regizorul de conținut al hotelului Savoy Mamaia. Sparge ideea de mai jos într-un reel de 3 scene a câte 8 secunde (total 24s), pentru Instagram 9:16.${giraffe ? ' Personajul este mascota Domnul Girafă (designul e fix, NU îl descrie). Împarte replica EXACT pe scene, cuvintele originale, fără să adaugi text.' : ' Fără personaje, doar atmosfera hotelului (plajă, piscină, restaurant, apus).'}
+        content: `${custom ? 'Ești regizor de conținut pentru reels de brand.' : 'Ești regizorul de conținut al hotelului Savoy Mamaia.'} Sparge ideea de mai jos într-un reel de 3 scene a câte 8 secunde (total 24s), pentru Instagram 9:16.${giraffe
+  ? ` Personajul este mascota ${charName} (designul e fix, NU îl descrie).${opts.dialogue
+      ? ' Împarte replica EXACT pe scene, cuvintele originale, fără să adaugi text.'
+      : ` SCRIE TU replica personajului, în română: ton cald, vorbit, cu personalitate, 1-2 propoziții scurte pe scenă (total ~50-70 de cuvinte = 20-25s de vorbire). Replica e despre IDEEA de mai jos, la persoana întâi, ca și cum ${charName} vorbește cu publicul.`}`
+  : ' Fără personaje, doar atmosfera hotelului (plajă, piscină, restaurant, apus).'}
 
 IDEE: ${opts.scenePrompt}
-${giraffe ? `REPLICA INTEGRALĂ: ${opts.dialogue}` : ''}
-
+${giraffe && opts.dialogue ? `REPLICA INTEGRALĂ: ${opts.dialogue}` : ''}
+${custom ? '' : `
 FUNDALURI REALE DISPONIBILE (fotografii adevărate din hotel, personajul poate fi plasat în ele): receptie = recepția elegantă cu marmură verde, receptie-wide = lobby-ul larg, loc-de-joaca = locul de joacă gonflabil de pe plajă. Folosește-le când scena se potrivește (ex: bun venit → receptie, distracție copii → loc-de-joaca); null pentru fundal curat de brand.
-
+`}
 Reguli: scena 1 e hook-ul (cea mai spectaculoasă), scena 3 închide cu CTA vizual. O singură acțiune pe scenă, dar AMPLĂ și dinamică: personajul traversează cadrul, pășește spre cameră, dansează, se rotește — niciodată static. Camera mereu în mișcare lentă (tracking lateral, orbit, push-in/pull-back) și mereu la distanță: personajul întreg în cadru, fără close-up.`,
       }],
     }),
@@ -112,8 +125,8 @@ Reguli: scena 1 e hook-ul (cea mai spectaculoasă), scena 3 închide cu CTA vizu
       n: i + 1,
       description: String(s.description ?? ''),
       motion: String(s.motion ?? ''),
-      pose: opts.mode === 'giraffe' && POSE_IDS.includes(s.pose) ? s.pose : null,
-      backdrop: opts.mode === 'giraffe' && BACKDROP_IDS.includes(s.backdrop) ? s.backdrop : null,
+      pose: giraffe && !custom && POSE_IDS.includes(s.pose) ? s.pose : null,
+      backdrop: giraffe && !custom && BACKDROP_IDS.includes(s.backdrop) ? s.backdrop : null,
       dialogue: opts.mode === 'giraffe' ? (s.dialogue ? String(s.dialogue) : null) : null,
       image: { status: 'pending' },
       video: { status: 'pending' },
@@ -121,13 +134,16 @@ Reguli: scena 1 e hook-ul (cea mai spectaculoasă), scena 3 închide cu CTA vizu
   };
 }
 
-function templateStoryboard(opts: { mode: 'scene' | 'giraffe'; scenePrompt: string; dialogue: string | null }): Storyboard {
+function templateStoryboard(opts: StoryboardOpts): Storyboard {
   const giraffe = opts.mode === 'giraffe';
-  // Split dialogue roughly in three at sentence boundaries.
-  const parts = giraffe && opts.dialogue
-    ? splitInThree(opts.dialogue)
+  const custom = Boolean(opts.characterName);
+  const charName = opts.characterName ?? 'Domnul Girafă';
+  // Split dialogue roughly in three at sentence boundaries; without a dialogue
+  // (and without a Claude key) fall back to a generic three-line script.
+  const parts = giraffe
+    ? splitInThree(opts.dialogue ?? `Salutare, eu sunt ${charName}! ${opts.scenePrompt}. Vă aștept cu drag, pe curând!`)
     : [null, null, null];
-  const poses = giraffe ? ['walk', 'selfie', 'dance'] : [null, null, null];
+  const poses = giraffe && !custom ? ['walk', 'selfie', 'dance'] : [null, null, null];
   const beats = [
     { d: `${opts.scenePrompt}, cadru larg de deschidere, lumină aurie`, m: giraffe ? 'The cartoon giraffe walks toward the camera, friendly. Slow push-in. Flat 2D cartoon character, design unchanged.' : 'Slow cinematic push-in, golden light, gentle water movement.' },
     { d: `${opts.scenePrompt}, cadru mediu, alt unghi`, m: giraffe ? 'The cartoon giraffe gestures while talking, relaxed. Camera static. Design unchanged.' : 'Lateral dolly, soft parallax, ambient motion.' },

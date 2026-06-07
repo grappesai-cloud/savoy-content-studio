@@ -5,9 +5,10 @@
 import type { APIRoute } from 'astro';
 import { json } from '../../../../../lib/api-utils';
 import { getReel, updateReel, setStoryboard } from '../../../../../lib/studio/db';
-import { submitImage, submitIntegrate } from '../../../../../lib/studio/providers';
+import { submitImage, submitIntegrate, submitCharacterAnchor } from '../../../../../lib/studio/providers';
 import { GIRAFFE_MASTER_IMAGE, GIRAFFE_POSES, BACKDROPS, STUDIO_MOCK, publicAssetBase } from '../../../../../lib/studio/config';
 import { compositeAnchor } from '../../../../../lib/studio/anchor';
+import { getCharacter } from '../../../../../lib/studio/characters';
 import { e } from '../../../../../lib/env';
 
 const ALLOWED = new Set(['storyboard_ready', 'image_generating', 'image_ready', 'image_failed']);
@@ -27,17 +28,35 @@ export const POST: APIRoute = async ({ locals, params, request, url }) => {
   const onlyScene: number | null = typeof body?.scene === 'number' ? body.scene : null;
 
   const withGiraffe = reel.mode === 'giraffe';
+  const character = reel.character_id ? await getCharacter(reel.character_id, user.id) : null;
   const storyboard = reel.storyboard;
   // Until the sponsor confirms the Nano Banana model path, giraffe anchors
   // come STRAIGHT from the official pose pack: identity is perfect by
   // definition (they ARE the brand asset) and Kling animates from them
   // beautifully (verified live). Flip by setting HIGGSFIELD_IMAGE_MODEL_GIRAFFE.
-  const directAnchors = withGiraffe && !e('HIGGSFIELD_IMAGE_MODEL_GIRAFFE') && !STUDIO_MOCK();
+  // Custom characters have no pose pack — their anchors are generated from the
+  // master image via FLUX Kontext (design-preserving edit, verified live).
+  const directAnchors = withGiraffe && !character && !e('HIGGSFIELD_IMAGE_MODEL_GIRAFFE') && !STUDIO_MOCK();
   let submitted = 0;
 
   for (const scene of storyboard.scenes) {
     if (onlyScene !== null && scene.n !== onlyScene) continue;
     if (onlyScene === null && scene.image.status === 'ready') continue;
+
+    if (withGiraffe && character) {
+      try {
+        const { jobId, provider } = await submitCharacterAnchor({
+          masterImageUrl: character.master_image_url,
+          scenePrompt: scene.description,
+          identityLock: character.identity_lock,
+        });
+        scene.image = { status: 'generating', provider, jobId, url: null };
+        submitted++;
+      } catch (err: any) {
+        scene.image = { status: 'failed', error: err?.message };
+      }
+      continue;
+    }
 
     const assetBase = publicAssetBase(url.origin);
     const pose = GIRAFFE_POSES.find(p => p.id === scene.pose);

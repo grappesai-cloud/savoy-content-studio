@@ -20,6 +20,8 @@ export interface StudioReel {
   title: string;
   scene_prompt: string;
   dialogue: string | null;
+  character_id: string | null;   // NULL = built-in Domnul Girafă
+  text_approved_at: string | null; // client's OK on the generated script
   pose: string | null;
   storyboard: Storyboard | null;
   status: StudioStatus;
@@ -95,8 +97,8 @@ export async function updateReel(
   id: string,
   patch: Partial<Pick<StudioReel,
     'status' | 'error_message' | 'image_url' | 'audio_url' | 'video_url' |
-    'provider' | 'provider_job_id' | 'title'
-  >> & { bump?: 'image_attempts' | 'video_attempts'; approve?: boolean; clearError?: boolean },
+    'provider' | 'provider_job_id' | 'title' | 'dialogue'
+  >> & { bump?: 'image_attempts' | 'video_attempts'; approve?: boolean; approveText?: boolean; clearError?: boolean },
   event?: { stage: string; msg: string }
 ): Promise<void> {
   const sql = getPg();
@@ -115,9 +117,11 @@ export async function updateReel(
       provider        = COALESCE(${patch.provider ?? null}, provider),
       provider_job_id = COALESCE(${patch.provider_job_id ?? null}, provider_job_id),
       title           = COALESCE(${patch.title ?? null}, title),
+      dialogue        = COALESCE(${patch.dialogue ?? null}, dialogue),
       image_attempts  = image_attempts + ${patch.bump === 'image_attempts' ? 1 : 0},
       video_attempts  = video_attempts + ${patch.bump === 'video_attempts' ? 1 : 0},
       approved_at     = CASE WHEN ${patch.approve ?? false} THEN now() ELSE approved_at END,
+      text_approved_at = CASE WHEN ${patch.approveText ?? false} THEN now() ELSE text_approved_at END,
       events          = events || COALESCE(${ev}::jsonb, '[]'::jsonb),
       updated_at      = now()
     WHERE id = ${id}

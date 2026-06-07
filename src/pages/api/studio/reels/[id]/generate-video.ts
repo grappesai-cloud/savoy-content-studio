@@ -7,6 +7,7 @@ import type { APIRoute } from 'astro';
 import { json } from '../../../../../lib/api-utils';
 import { getReel, updateReel, setStoryboard } from '../../../../../lib/studio/db';
 import { generateSpeech, submitVideo } from '../../../../../lib/studio/providers';
+import { getCharacter } from '../../../../../lib/studio/characters';
 
 const ALLOWED = new Set(['approved', 'video_failed']);
 
@@ -22,12 +23,16 @@ export const POST: APIRoute = async ({ locals, params }) => {
   if (!reel.storyboard) return json({ error: 'Lipsește storyboard-ul.' }, 409);
 
   const storyboard = reel.storyboard;
+  const character = reel.character_id ? await getCharacter(reel.character_id, user.id) : null;
+  // "the cartoon giraffe" / "the cartoon character (Numele)" in motion prompts
+  const charLabel = character ? `cartoon character ("${character.name}")` : 'cartoon giraffe';
 
   try {
-    // Voice first (giraffe): one TTS per scene line. Assembly aligns each
-    // line to the START of its own clip — a single full read drifts out of
-    // sync with the scenes it belongs to (verified on the talking test).
-    if (reel.mode === 'giraffe' && reel.dialogue) {
+    // Voice first: one TTS per scene line. Assembly aligns each line to the
+    // START of its own clip — a single full read drifts out of sync with the
+    // scenes it belongs to (verified on the talking test). Gate on the scenes
+    // themselves: in the dashboard flow Claude wrote the lines, not the user.
+    if (reel.mode === 'giraffe' && storyboard.scenes.some(s => s.dialogue)) {
       const missing = storyboard.scenes.filter(s => s.dialogue && !s.audioUrl);
       if (missing.length > 0) {
         await updateReel(reel.id, { status: 'audio_generating' },
@@ -53,12 +58,13 @@ export const POST: APIRoute = async ({ locals, params }) => {
         // (A/B-verified live on the reception anchor).
         const talking = reel.mode === 'giraffe' && scene.dialogue;
         const motionPrompt = talking
-          ? `The cartoon giraffe is SPEAKING to the camera from the very FIRST frame to the very LAST frame, continuously: mouth opening and closing the entire clip, like an enthusiastic TV host delivering lines non-stop. The talking never pauses. The head stays in THREE-QUARTER view toward the camera for the WHOLE clip — the mouth is clearly visible side-on at all times; the muzzle NEVER points straight into the lens and the head never turns away. WIDE shot the entire clip: the FULL character stays in frame at a distance, never a close-up. The character MOVES with energy through the whole clip while talking: ${scene.motion} The movement is lively and continuous — never standing still.`
+          ? `The ${charLabel} is SPEAKING to the camera from the very FIRST frame to the very LAST frame, continuously: mouth opening and closing the entire clip, like an enthusiastic TV host delivering lines non-stop. The talking never pauses. The head stays in THREE-QUARTER view toward the camera for the WHOLE clip — the mouth is clearly visible side-on at all times; the muzzle NEVER points straight into the lens and the head never turns away. WIDE shot the entire clip: the FULL character stays in frame at a distance, never a close-up. The character MOVES with energy through the whole clip while talking: ${scene.motion} The movement is lively and continuous — never standing still.`
           : scene.motion;
         const { jobId, provider } = await submitVideo({
           imageUrl: scene.image.url,
           motionPrompt,
           talking: Boolean(talking),
+          characterName: character?.name,
         });
         scene.video = {
           status: 'generating', provider, jobId, url: null,
