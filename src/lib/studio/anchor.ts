@@ -50,6 +50,11 @@ export async function compositeAnchor(opts: {
   poseAlphaUrl: string; // absolute URL, alpha-cut pose
   reelId: string;
   sceneN: number;
+  // Talking scenes: giraffe in the MIDDLE DISTANCE (~38% of frame height
+  // instead of ~58%). Validated 2026-06-07: at hero size Kling corrupts the
+  // details (third arm, doubled tail, even three eyes); at mid-ground the
+  // artifacts vanish AND the smaller mouth sells the talking illusion better.
+  midGround?: boolean;
 }): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'savoy-anchor-'));
   try {
@@ -64,21 +69,24 @@ export async function compositeAnchor(opts: {
     const pose = await fetchTo(opts.poseAlphaUrl, 'pose.png');
     const out = join(dir, 'anchor.jpg');
 
-    // Giraffe at ~58% of frame height (1110px of 1920), bottom-center,
-    // feet ~96px above the bottom edge so it sits on the floor line.
+    // Hero scenes: giraffe at ~58% of frame height (1110px of 1920), feet
+    // ~96px above the bottom edge. Mid-ground (talking): ~38% (740px), feet
+    // ~150px up — further back in the perspective, on the floor line.
     // Anti-sticker: a soft contact shadow grounds the character — the pose's
     // alpha is flattened to black, squashed to an ellipse at the feet and
     // blurred, then the character lands on top of it.
+    const gh = opts.midGround ? 740 : 1110;
+    const feet = opts.midGround ? 150 : 96;
     await exec(FF, [
       '-y', '-i', bg, '-i', pose,
       '-filter_complex',
       [
-        `[1]scale=-1:1110,format=rgba,split[g][gs]`,
+        `[1]scale=-1:${gh},format=rgba,split[g][gs]`,
         // shadow: silhouette → black @60% → squash to 11% height → soft blur
         // (geq mangles RGBA channels — colorchannelmixer keeps true black)
         `[gs]colorchannelmixer=rr=0:gg=0:bb=0:aa=0.6,scale=iw*1.2:ih*0.11,boxblur=12:6[sh]`,
-        `[0][sh]overlay=x=(W-w)/2:y=H-h-40[bgsh]`,
-        `[bgsh][g]overlay=x=(W-w)/2:y=H-h-96`,
+        `[0][sh]overlay=x=(W-w)/2:y=H-h-${feet - 56}[bgsh]`,
+        `[bgsh][g]overlay=x=(W-w)/2:y=H-h-${feet}`,
       ].join(';'),
       '-frames:v', '1', '-q:v', '3',
       out,

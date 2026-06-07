@@ -129,14 +129,16 @@ export async function submitImage(opts: {
 }
 
 // ── Anchor integration (FLUX Kontext, path verified live) ────────────────────
-// Takes the deterministic composite and re-lights it: ambient light on the
-// character, realistic contact shadow, subtle reflection — kills the sticker
-// look while Kontext preserves the design (that's its specialty). 9:16 honored
-// via aspect_ratio (A/B verified; without it the model returns landscape).
+// Takes the deterministic composite and adds ONLY a contact shadow. The prompt
+// is deliberately minimal: any "integrate naturally / match lighting" wording
+// makes Kontext 3D-ify the flat official artwork (ink outline lost, bow tie
+// dropped, plastic-toy look — caught on the 2026-06-07 reel). The soft-shaded
+// pose pack masked this; the flat brand artwork exposes it. 9:16 honored via
+// aspect_ratio (A/B verified; without it the model returns landscape).
 
 export async function submitIntegrate(imageUrl: string): Promise<{ jobId: string; provider: string }> {
   const jobId = await hfSubmit('flux-kontext', {
-    prompt: 'Integrate the cartoon giraffe character naturally into the real photo: match the ambient lighting of the location on the character, add a soft realistic contact shadow on the floor under its hooves, subtle floor reflection. KEEP the character design EXACTLY unchanged: same colors, same proportions, same straw hat, same bow tie, same cartoon outline style. Do not redesign the character. Do not change the background. Keep the full vertical 9:16 framing of the original image.',
+    prompt: "ONLY add a soft elliptical contact shadow on the ground under the cartoon giraffe's hooves. Do NOT redraw, restyle or modify the giraffe in ANY way: it must stay a FLAT 2D hand-drawn cartoon illustration with black ink outlines, flat yellow fill, flat orange spots, the exact same straw hat and orange bow tie, exact same pose, exact same pixels, exact same size and position. It is a 2D sticker placed on the photo and must remain looking like a 2D drawing. Do not make it 3D, do not add volume, do not change its lighting. Background photo unchanged.",
     image_url: imageUrl,
     input_image: { type: 'image_url', image_url: imageUrl },
     aspect_ratio: '9:16',
@@ -175,7 +177,15 @@ export async function pollImage(provider: string, jobId: string): Promise<JobSta
 // ── TTS (ElevenLabs) — synchronous, returns audio bytes ───────────────────────
 // Voice + settings are LOCKED by the brief. Returns a Vercel Blob URL.
 
-export async function generateSpeech(text: string, reelId: string): Promise<string> {
+export async function generateSpeech(
+  text: string,
+  reelId: string,
+  // Neighbor lines from the storyboard. multilingual_v2 reinterprets the voice
+  // on every isolated call (sounds like a different speaker between scenes);
+  // previous_text/next_text give ElevenLabs the surrounding script so the
+  // prosody stays continuous, as one narration. Generate scene lines IN ORDER.
+  ctx?: { previousText?: string; nextText?: string }
+): Promise<string> {
   // Voice goes real as soon as the ElevenLabs key exists — independent of
   // STUDIO_MOCK, which only gates the (credit-burning) image/video providers.
   if (!e('ELEVENLABS_API_KEY')) {
@@ -194,6 +204,8 @@ export async function generateSpeech(text: string, reelId: string): Promise<stri
         text,
         model_id: ELEVEN_MODEL,
         voice_settings: ELEVEN_VOICE_SETTINGS,
+        ...(ctx?.previousText ? { previous_text: ctx.previousText } : {}),
+        ...(ctx?.nextText ? { next_text: ctx.nextText } : {}),
       }),
     }
   );
@@ -255,15 +267,23 @@ export async function submitVideo(opts: {
   // Higgsfield platform (path verified live). With endImageUrl the model
   // interpolates between two identity-locked anchors — near-zero drift.
   const anatomy = opts.characterName
-    ? `The character "${opts.characterName}" has exactly TWO arms and TWO legs — never extra limbs, never duplicated body parts.`
-    : `The giraffe has black HOOVES, never fingers, never hands, never gloves. The giraffe has exactly TWO arms and TWO legs — never extra limbs, never duplicated body parts.`;
+    ? `The character "${opts.characterName}" keeps EXACTLY two arms, two legs and one tail at all times — no limb is ever added, duplicated or split.`
+    : `The giraffe has black HOOVES, never fingers, never hands, never gloves. It keeps EXACTLY two arms, two legs and one tail at all times — no limb is ever added, duplicated or split.`;
+  // Talking scenes: body COMPLETELY still, hooves planted — gestures are what
+  // makes Kling invent extra limbs (third arm appeared exactly when a
+  // "welcoming nod" was directed; validated 2026-06-07). The background is a
+  // photo: any painted/inflatable faces in it must stay frozen, or Kling
+  // animates them too (caught on the playground mascot slide).
+  const stillness = opts.talking
+    ? ' Its body, arms, legs and tail stay COMPLETELY STILL, hooves planted on the ground — no gestures, no walking, no floating; only the head and mouth move.'
+    : '';
   const jobId = await hfSubmit(VIDEO_MODEL, {
     image_url: opts.imageUrl,
     ...(opts.endImageUrl ? { end_image_url: opts.endImageUrl } : {}),
-    prompt: `${opts.motionPrompt} The cartoon character keeps EXACTLY this design, no redesign. It stays naturally integrated in the scene: scene lighting on the character, soft contact shadow under it following its movement. ${anatomy}`,
+    prompt: `${opts.motionPrompt} The cartoon character keeps EXACTLY this design, no redesign. It stays a flat 2D hand-drawn cartoon with black ink outlines, naturally integrated in the scene with its contact shadow.${stillness} ${anatomy} EVERYTHING else in the frame is a still photograph and stays COMPLETELY FROZEN: any painted face or cartoon decoration in the background is PRINTED and must never move, blink or animate. No people enter the frame.`,
     // Kling honors negative_prompt on this platform; unknown fields are
     // silently ignored, so this is safe even if the model path changes.
-    negative_prompt: `${opts.talking ? 'close-up, extreme close-up, face filling the frame, closed mouth, static mouth, hidden mouth, muzzle pointing at the camera, frontal muzzle view, head turning away, waving, big gestures, ' : ''}extra limbs, extra arms, third arm, duplicated limbs, deformed hands, fingers, gloves, mutated anatomy, redesigned character`,
+    negative_prompt: `${opts.talking ? 'close-up, extreme close-up, face filling the frame, closed mouth, static mouth, hidden mouth, muzzle pointing at the camera, frontal muzzle view, head turning away, waving, gesturing, big gestures, walking, floating, levitating, ' : ''}extra limbs, extra arms, third arm, extra hand, extra leg, second tail, duplicated limbs, limbs splitting, new arm appearing, deformed hands, fingers, gloves, mutated anatomy, redesigned character, 3D render, realistic giraffe, background face moving, painted face animating, morphing`,
     duration: 5,
   });
   return { jobId, provider: 'higgsfield' };

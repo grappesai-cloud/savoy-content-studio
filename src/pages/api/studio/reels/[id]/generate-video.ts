@@ -37,8 +37,17 @@ export const POST: APIRoute = async ({ locals, params }) => {
       if (missing.length > 0) {
         await updateReel(reel.id, { status: 'audio_generating' },
           { stage: 'audio', msg: 'Generare voce ElevenLabs (română), pe scene' });
+        // IN ORDER, with neighbor lines as context: previous_text/next_text
+        // keep the prosody continuous across separate TTS calls — without
+        // them multilingual_v2 reinterprets the voice per call and scenes
+        // can sound like different speakers (caught by ear, 2026-06-07).
+        const spoken = storyboard.scenes.filter(s => s.dialogue);
         for (const scene of missing) {
-          scene.audioUrl = await generateSpeech(scene.dialogue!, `${reel.id}/s${scene.n}`);
+          const at = spoken.findIndex(s => s.n === scene.n);
+          scene.audioUrl = await generateSpeech(scene.dialogue!, `${reel.id}/s${scene.n}`, {
+            previousText: at > 0 ? spoken[at - 1].dialogue! : undefined,
+            nextText: at >= 0 && at < spoken.length - 1 ? spoken[at + 1].dialogue! : undefined,
+          });
         }
         await setStoryboard(reel.id, storyboard);
         await updateReel(reel.id, {}, { stage: 'audio', msg: `Voce generată: ${missing.length} replici` });

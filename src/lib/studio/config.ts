@@ -72,9 +72,13 @@ Never change colors, proportions, accessories or art style. Same character in ev
 
 export const ELEVEN_VOICE_ID = 'g8YRbOlJsPkrezcSUiCM';
 export const ELEVEN_MODEL = 'eleven_multilingual_v2';
+// stability 0.5 made multilingual_v2 reinterpret the voice on every separate
+// call — short Romanian lines could sound like a different speaker (caught by
+// ear on the 25s reel). 0.75/0.85 locks the timbre; delivery gets ~10% slower,
+// assembly compensates with atempo ≤1.12 (pitch-preserving).
 export const ELEVEN_VOICE_SETTINGS = {
-  stability: 0.5,
-  similarity_boost: 0.75,
+  stability: 0.75,
+  similarity_boost: 0.85,
   style: 0.0,
   use_speaker_boost: true,
 };

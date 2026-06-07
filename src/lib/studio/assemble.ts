@@ -149,8 +149,22 @@ export async function assembleReel(opts: {
           if (!ares.ok) throw new Error(`Scene ${i + 1} audio fetch failed: ${ares.status}`);
           const line = join(dir, `line${i}.mp3`);
           await writeFile(line, Buffer.from(await ares.arrayBuffer()));
-          // pad to clip length; a line longer than its clip is trimmed
-          await exec(FF, ['-y', '-i', line, '-af', 'apad', '-t', dur.toFixed(3),
+          // Sync recipe (validated 2026-06-07): strip ElevenLabs' silent
+          // head/tail so the first syllable lands on the scene's first frame,
+          // then start the voice 120ms in — mouth moving before sound reads
+          // natural, sound before motion reads broken. A line longer than its
+          // clip is tempo-compressed (pitch-preserving, ≤1.25) instead of cut
+          // mid-word.
+          const trimmed = join(dir, `line${i}-trim.wav`);
+          await exec(FF, ['-y', '-i', line, '-af',
+            'silenceremove=start_periods=1:start_threshold=-45dB,areverse,silenceremove=start_periods=1:start_threshold=-45dB,areverse',
+            trimmed], { timeout: 60_000 });
+          const lineDur = await clipDuration(trimmed);
+          const delayS = 0.12;
+          const budget = dur - delayS - 0.05;
+          const tempo = lineDur > budget ? Math.min(1.25, lineDur / budget) : 1;
+          const af = `${tempo > 1 ? `atempo=${tempo.toFixed(3)},` : ''}adelay=${Math.round(delayS * 1000)}:all=1,apad`;
+          await exec(FF, ['-y', '-i', trimmed, '-af', af, '-t', dur.toFixed(3),
             '-ar', '44100', '-ac', '2', '-c:a', 'aac', seg], { timeout: 60_000 });
         } else {
           await exec(FF, ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',

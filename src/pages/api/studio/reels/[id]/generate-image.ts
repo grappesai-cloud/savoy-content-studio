@@ -72,6 +72,9 @@ export const POST: APIRoute = async ({ locals, params, request, url }) => {
             poseAlphaUrl: new URL(`/studio/poses/alpha/${pose?.id ?? 'walk'}.png`, url.origin).toString(),
             reelId: reel.id,
             sceneN: scene.n,
+            // Dialogue scenes go mid-ground: Kling corrupts hero-size detail
+            // (extra limbs) and a distant mouth sells the sync illusion.
+            midGround: !!scene.dialogue,
           });
           // Anti-sticker pass: FLUX Kontext re-lights the composite (ambient
           // light on the character, real shadow, reflection) while preserving
