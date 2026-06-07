@@ -81,11 +81,15 @@ export async function compositeAnchor(opts: {
       '-y', '-i', bg, '-i', pose,
       '-filter_complex',
       [
+        // Uploads come in any size/orientation — normalize the backdrop to
+        // 9:16 (cover + center-crop) or the anchor inherits the photo's
+        // aspect and Kling follows it (landscape reel).
+        `[0]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[bg]`,
         `[1]scale=-1:${gh},format=rgba,split[g][gs]`,
         // shadow: silhouette → black @60% → squash to 11% height → soft blur
         // (geq mangles RGBA channels — colorchannelmixer keeps true black)
         `[gs]colorchannelmixer=rr=0:gg=0:bb=0:aa=0.6,scale=iw*1.2:ih*0.11,boxblur=12:6[sh]`,
-        `[0][sh]overlay=x=(W-w)/2:y=H-h-${feet - 56}[bgsh]`,
+        `[bg][sh]overlay=x=(W-w)/2:y=H-h-${feet - 56}[bgsh]`,
         `[bgsh][g]overlay=x=(W-w)/2:y=H-h-${feet}`,
       ].join(';'),
       '-frames:v', '1', '-q:v', '3',
