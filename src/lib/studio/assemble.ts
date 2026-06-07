@@ -87,6 +87,27 @@ export async function assembleReel(opts: {
 }): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'savoy-'));
   try {
+    // 0) Voice lines FIRST: silence-trimmed, durations measured. Each scene's
+    //    video gets CUT at its line's end (+0.12s lead +0.35s tail) — a 3s
+    //    line in a 5s clip otherwise leaves 2s of mouth flapping in silence,
+    //    which is what reads as "broken lip-sync" (validated 2026-06-07).
+    const lineTrimmed: (string | null)[] = [];
+    const lineDur: number[] = [];
+    for (let i = 0; i < opts.clipUrls.length; i++) {
+      const lineUrl = (opts.sceneAudioUrls ?? [])[i];
+      if (!lineUrl) { lineTrimmed.push(null); lineDur.push(0); continue; }
+      const ares = await fetch(lineUrl);
+      if (!ares.ok) throw new Error(`Scene ${i + 1} audio fetch failed: ${ares.status}`);
+      const lineRaw = join(dir, `line${i}.mp3`);
+      await writeFile(lineRaw, Buffer.from(await ares.arrayBuffer()));
+      const trimmed = join(dir, `line${i}-trim.wav`);
+      await exec(FF, ['-y', '-i', lineRaw, '-af',
+        'silenceremove=start_periods=1:start_threshold=-45dB,areverse,silenceremove=start_periods=1:start_threshold=-45dB,areverse',
+        trimmed], { timeout: 60_000 });
+      lineTrimmed.push(trimmed);
+      lineDur.push(await clipDuration(trimmed));
+    }
+
     // 1) Download every clip + dynamic-edit pass: alternating slow punch-zoom
     //    (in on even scenes, out on odd) — the cut feels edited, not stitched.
     //    The zoompan re-encode also normalizes fps/params so concat can copy.
@@ -98,6 +119,8 @@ export async function assembleReel(opts: {
       await writeFile(raw, Buffer.from(await res.arrayBuffer()));
       const p = join(dir, `clip${i}.mp4`);
       const { dur, fps } = await clipInfo(raw);
+      // scene ends shortly after its line does — never talks on mute
+      const sceneDur = lineTrimmed[i] ? Math.min(dur, lineDur[i] + 0.12 + 0.35) : dur;
       const frames = Math.max(1, Math.round(dur * fps));
       const zoom = i % 2 === 0
         ? `min(1+0.09*on/${frames},1.09)`          // slow push-in
@@ -108,13 +131,23 @@ export async function assembleReel(opts: {
           // zoompan fps MUST match the source — forcing a different rate
           // re-times the clip and desyncs the per-scene voice (verified)
           '-vf', `scale=1080:1920,zoompan=z='${zoom}':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=${fps}`,
+          '-t', sceneDur.toFixed(3),
           '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-pix_fmt', 'yuv420p',
           p,
         ], { timeout: 180_000 });
         clips.push(p);
       } catch (err: any) {
         console.error('[studio/assemble] zoom pass skipped for clip', i + 1, err?.message);
-        clips.push(raw);
+        if (sceneDur < dur - 0.05) {
+          // still honor the voice-length cut even without the zoom pass
+          const cutOnly = join(dir, `clipcut${i}.mp4`);
+          await exec(FF, ['-y', '-i', raw, '-t', sceneDur.toFixed(3),
+            '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-pix_fmt', 'yuv420p',
+            cutOnly], { timeout: 180_000 });
+          clips.push(cutOnly);
+        } else {
+          clips.push(raw);
+        }
       }
     }
 
@@ -143,28 +176,18 @@ export async function assembleReel(opts: {
         const dur = await clipDuration(clips[i]);
         durations.push(dur);
         const seg = join(dir, `aseg${i}.m4a`);
-        const lineUrl = sceneAudio[i];
-        if (lineUrl) {
-          const ares = await fetch(lineUrl);
-          if (!ares.ok) throw new Error(`Scene ${i + 1} audio fetch failed: ${ares.status}`);
-          const line = join(dir, `line${i}.mp3`);
-          await writeFile(line, Buffer.from(await ares.arrayBuffer()));
-          // Sync recipe (validated 2026-06-07): strip ElevenLabs' silent
-          // head/tail so the first syllable lands on the scene's first frame,
-          // then start the voice 120ms in — mouth moving before sound reads
-          // natural, sound before motion reads broken. A line longer than its
-          // clip is tempo-compressed (pitch-preserving, ≤1.25) instead of cut
-          // mid-word.
-          const trimmed = join(dir, `line${i}-trim.wav`);
-          await exec(FF, ['-y', '-i', line, '-af',
-            'silenceremove=start_periods=1:start_threshold=-45dB,areverse,silenceremove=start_periods=1:start_threshold=-45dB,areverse',
-            trimmed], { timeout: 60_000 });
-          const lineDur = await clipDuration(trimmed);
+        if (lineTrimmed[i]) {
+          // Sync recipe (validated 2026-06-07): the line was silence-trimmed
+          // in step 0 and its scene was CUT to the line's length, so the
+          // voice fills the scene. Start it 120ms in — mouth moving before
+          // sound reads natural, sound before motion reads broken. A line
+          // longer than its clip is tempo-compressed (pitch-preserving,
+          // ≤1.25) instead of cut mid-word.
           const delayS = 0.12;
           const budget = dur - delayS - 0.05;
-          const tempo = lineDur > budget ? Math.min(1.25, lineDur / budget) : 1;
+          const tempo = lineDur[i] > budget ? Math.min(1.25, lineDur[i] / budget) : 1;
           const af = `${tempo > 1 ? `atempo=${tempo.toFixed(3)},` : ''}adelay=${Math.round(delayS * 1000)}:all=1,apad`;
-          await exec(FF, ['-y', '-i', trimmed, '-af', af, '-t', dur.toFixed(3),
+          await exec(FF, ['-y', '-i', lineTrimmed[i]!, '-af', af, '-t', dur.toFixed(3),
             '-ar', '44100', '-ac', '2', '-c:a', 'aac', seg], { timeout: 60_000 });
         } else {
           await exec(FF, ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
