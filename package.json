@@ -29,7 +29,8 @@
     "ffmpeg-static": "^5.3.0",
     "nanoid": "^5.1.11",
     "pino": "^10.3.1",
-    "postgres": "^3.4.9"
+    "postgres": "^3.4.9",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",
@@ -39,5 +40,5 @@
     "tailwindcss": "^4.3.0",
     "typescript": "^5.7.0"
   },
-  "description": "Savoy Content Studio: text \u2192 identity-locked Domnul Giraf\u0103 image \u2192 approved \u2192 9:16 reel. Hack A Ton 2026."
+  "description": "Savoy Content Studio: text → identity-locked Domnul Girafă image → approved → 9:16 reel. Hack A Ton 2026."
 }
