@@ -20,3 +20,6 @@ Thumbs.db
 npm-debug.log*
 .vercel
 .env*.local
+
+# nested repo — are propriul remote (grappesai-cloud/savoy-giraffe-worker)
+runpod-giraffe/
